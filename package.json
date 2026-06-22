@@ -1,0 +1,52 @@
+{
+  "name": "@justfortytwo/cli",
+  "version": "0.0.0",
+  "description": "All-in-one installer and lifecycle CLI for justfortytwo — scaffolds the persona surface and provisions the npm engine (memory MCP, safety gate, channel adapters, embedder).",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "bin": {
+    "create-fortytwo": "dist/index.js",
+    "fortytwo": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test dist/**/*.test.js",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "justfortytwo",
+    "fortytwo",
+    "claude-code",
+    "personal-assistant",
+    "cli",
+    "installer"
+  ],
+  "dependencies": {},
+  "peerDependencies": {
+    "@justfortytwo/memory": "*",
+    "@justfortytwo/gate": "*",
+    "@justfortytwo/persona": "*",
+    "@justfortytwo/telegram": "*"
+  },
+  "peerDependenciesMeta": {
+    "@justfortytwo/memory": { "optional": false },
+    "@justfortytwo/gate": { "optional": false },
+    "@justfortytwo/persona": { "optional": false },
+    "@justfortytwo/telegram": { "optional": true }
+  },
+  "fortytwo": {
+    "comment": "Compatibility contract this CLI version was authored against. doctor cross-checks the *installed* sibling packages against these ranges; update/rollback record the resolved set into .fortytwo/state.json. TODO(wire): bump these as sibling contracts evolve.",
+    "compat": {
+      "@justfortytwo/memory": "^0.1.0",
+      "@justfortytwo/gate": "^0.1.0",
+      "@justfortytwo/persona": "^0.1.0",
+      "@justfortytwo/telegram": "^0.1.0"
+    }
+  }
+}
