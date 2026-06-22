@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "description": "All-in-one installer and lifecycle CLI for justfortytwo — scaffolds the persona surface and provisions the npm engine (guide MCP, safety gate, channel adapters, embedder).",
   "license": "MIT",
+  "author": { "name": "Enrico Deleo", "url": "https://enricodeleo.com" },
   "type": "module",
   "engines": {
     "node": ">=18"

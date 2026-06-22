@@ -64,3 +64,7 @@ your machine. The standard model is `qwen3-embedding:0.6b`, served by Ollama;
 ## License
 
 MIT © 2026 justfortytwo
+
+---
+
+Created and maintained by [**Enrico Deleo**](https://enricodeleo.com).
