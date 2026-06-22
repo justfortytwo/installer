@@ -1,7 +1,7 @@
 {
-  "name": "@justfortytwo/cli",
+  "name": "@justfortytwo/magrathea",
   "version": "0.0.0",
-  "description": "All-in-one installer and lifecycle CLI for justfortytwo — scaffolds the persona surface and provisions the npm engine (memory MCP, safety gate, channel adapters, embedder).",
+  "description": "All-in-one installer and lifecycle CLI for justfortytwo — scaffolds the persona surface and provisions the npm engine (guide MCP, safety gate, channel adapters, embedder).",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -29,24 +29,24 @@
   ],
   "dependencies": {},
   "peerDependencies": {
-    "@justfortytwo/memory": "*",
-    "@justfortytwo/gate": "*",
-    "@justfortytwo/persona": "*",
-    "@justfortytwo/telegram": "*"
+    "@justfortytwo/guide": "*",
+    "@justfortytwo/vogon": "*",
+    "@justfortytwo/ford": "*",
+    "@justfortytwo/babelfish": "*"
   },
   "peerDependenciesMeta": {
-    "@justfortytwo/memory": { "optional": false },
-    "@justfortytwo/gate": { "optional": false },
-    "@justfortytwo/persona": { "optional": false },
-    "@justfortytwo/telegram": { "optional": true }
+    "@justfortytwo/guide": { "optional": false },
+    "@justfortytwo/vogon": { "optional": false },
+    "@justfortytwo/ford": { "optional": false },
+    "@justfortytwo/babelfish": { "optional": true }
   },
   "fortytwo": {
     "comment": "Compatibility contract this CLI version was authored against. doctor cross-checks the *installed* sibling packages against these ranges; update/rollback record the resolved set into .fortytwo/state.json. TODO(wire): bump these as sibling contracts evolve.",
     "compat": {
-      "@justfortytwo/memory": "^0.1.0",
-      "@justfortytwo/gate": "^0.1.0",
-      "@justfortytwo/persona": "^0.1.0",
-      "@justfortytwo/telegram": "^0.1.0"
+      "@justfortytwo/guide": "^0.1.0",
+      "@justfortytwo/vogon": "^0.1.0",
+      "@justfortytwo/ford": "^0.1.0",
+      "@justfortytwo/babelfish": "^0.1.0"
     }
   }
 }

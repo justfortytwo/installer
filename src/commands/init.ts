@@ -3,9 +3,9 @@
 // End state after a successful init:
 //   - .fortytwo/identity.json  written from captured answers (gitignored)
 //   - .env                     written with secrets (gitignored)
-//   - CLAUDE.md + context/*    rendered from @justfortytwo/persona templates
-//   - .mcp.json                wired to the memory MCP server
-//   - Ollama has EMBED_MODEL pulled; the memory DB is migrated
+//   - CLAUDE.md + context/*    rendered from @justfortytwo/ford templates
+//   - .mcp.json                wired to the guide MCP server
+//   - Ollama has EMBED_MODEL pulled; the guide DB is migrated
 //   - .fortytwo/state.json     records the resolved sibling version set (rollback baseline)
 //   - a one-time pairing code printed so the owner can /login from their channel
 //
@@ -64,13 +64,13 @@ function writeEnv(_secrets: Record<string, string>, _root: string): void {
  *      || ollama pull $EMBED_MODEL`). Warn-only on unreachable, like wakeup.sh —
  *      the engine degrades to FakeEmbedder, it does not hard-fail.
  *   2. run db migrations against DB_PATH.
- * TODO(wire): step 2 delegates to @justfortytwo/memory's runMigrations
+ * TODO(wire): step 2 delegates to @justfortytwo/guide's runMigrations
  * (the engine owns the migration list; the CLI must not duplicate schema).
  */
 async function provision(_secrets: Record<string, string>): Promise<void> {
-  // TODO(wire): import { runMigrations } from '@justfortytwo/memory' and run it
+  // TODO(wire): import { runMigrations } from '@justfortytwo/guide' and run it
   // against DB_PATH after ensuring the embedder model is present.
-  throw new Error('TODO(wire): provision — ollama pull EMBED_MODEL + db migrate via @justfortytwo/memory');
+  throw new Error('TODO(wire): provision — ollama pull EMBED_MODEL + db migrate via @justfortytwo/guide');
 }
 
 /**
@@ -104,14 +104,14 @@ export async function runInit(_argv: string[]): Promise<number> {
 
 /**
  * Issue the owner's first pairing code by delegating to the channel adapter.
- * TODO(wire): import { issueChallenge } from '@justfortytwo/telegram' and call
+ * TODO(wire): import { issueChallenge } from '@justfortytwo/babelfish' and call
  * it; it mints a one-time /login code, persists the pending challenge, and the
  * owner redeems it from their Telegram chat to bind ALLOWED_CHAT_IDS. (In the
  * monolith the allowlist is static env; the adapter's issueChallenge is the
  * designed-future pairing handshake that supersedes hand-editing ALLOWED_CHAT_IDS.)
  */
 async function issuePairingCode(_identity: Identity): Promise<string> {
-  throw new Error('TODO(wire): issuePairingCode — @justfortytwo/telegram issueChallenge');
+  throw new Error('TODO(wire): issuePairingCode — @justfortytwo/babelfish issueChallenge');
 }
 
 void issuePairingCode;

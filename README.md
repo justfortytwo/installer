@@ -1,4 +1,4 @@
-# @justfortytwo/cli
+# @justfortytwo/magrathea
 
 The all-in-one installer and lifecycle CLI for **justfortytwo** — a personal
 assistant built on Claude Code. One package ships two bins:
@@ -12,13 +12,13 @@ assistant built on Claude Code. One package ships two bins:
 justfortytwo is delivered as **two surfaces**, and this CLI is the single
 operator interface over both:
 
-1. **The npm engine.** The reusable machinery — the memory MCP server, the
+1. **The npm engine.** The reusable machinery — the guide MCP server, the
    safety gate, the channel adapters, and the local embedder — published as
    `@justfortytwo/*` packages and wired in as Claude Code plugins. This is
    shared, versioned code.
 2. **The scaffolded persona.** `CLAUDE.md` + `context/*` — who the assistant is
    and who it serves. This is **not** a plugin. It is per-user, personal, and
-   gitignored. The CLI **scaffolds** it by rendering the `@justfortytwo/persona`
+   gitignored. The CLI **scaffolds** it by rendering the `@justfortytwo/ford`
    package's `templates/` (guided by its `manifest.json`) against your captured
    answers in `.fortytwo/identity.json`. Re-rendering is idempotent and never
    clobbers fields you've captured or hand-edited.
@@ -30,9 +30,9 @@ gitignored `.fortytwo/identity.json`; neither is ever committed.
 
 | Verb       | What it does |
 |------------|--------------|
-| `init`     | Capture your assistant's name + owner details (interactive, or via flags/env for CI). Writes `.fortytwo/identity.json`, secrets to `.env`, renders the persona, provisions local infra (pulls the embedder model, migrates the memory DB), records the installed version set, and issues a pairing code. |
+| `init`     | Capture your assistant's name + owner details (interactive, or via flags/env for CI). Writes `.fortytwo/identity.json`, secrets to `.env`, renders the persona, provisions local infra (pulls the embedder model, migrates the guide DB), records the installed version set, and issues a pairing code. |
 | `pair`     | Issue a one-time `/login` pairing code to bind another chat/device to a channel. |
-| `doctor`   | Health-check the engine: boot the memory MCP and assert its tool contract, fire a synthetic event at the safety gate, confirm DB migrations are applied, check the embedder model is pulled, and cross-check installed sibling versions against the declared compatibility ranges. |
+| `doctor`   | Health-check the engine: boot the guide MCP and assert its tool contract, fire a synthetic event at the safety gate, confirm DB migrations are applied, check the embedder model is pulled, and cross-check installed sibling versions against the declared compatibility ranges. |
 | `update`   | Resolve the latest in-range version of each engine package, install, then run `doctor` to verify. On failure it points you to `rollback`. |
 | `rollback` | Restore the previous version set recorded before the last `update`. |
 | `enrich`   | Capture more answers to deepen the persona, then re-render (no clobber). |

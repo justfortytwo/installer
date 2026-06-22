@@ -5,20 +5,20 @@
 // actionable. Exit code is non-zero if ANY required check fails.
 //
 // CROSS-PACKAGE CONTRACTS asserted here:
-//   - @justfortytwo/memory exports MEMORY_TOOL_CONTRACT_VERSION and its tools are
-//     namespaced mcp__fortytwo-memory__* (e.g. mcp__fortytwo-memory__log_entry,
-//     mcp__fortytwo-memory__recall, mcp__fortytwo-memory__query). doctor boots the
+//   - @justfortytwo/guide exports GUIDE_TOOL_CONTRACT_VERSION and its tools are
+//     namespaced mcp__fortytwo-guide__* (e.g. mcp__fortytwo-guide__store,
+//     mcp__fortytwo-guide__recall, mcp__fortytwo-guide__query). doctor boots the
 //     MCP and asserts the advertised tool schema matches the version this CLI was
 //     built against.
-//   - @justfortytwo/gate exports POLICY_SCHEMA_VERSION. doctor fires a SYNTHETIC
+//   - @justfortytwo/vogon exports POLICY_SCHEMA_VERSION. doctor fires a SYNTHETIC
 //     PreToolUse event at the gate and asserts a well-formed allow/defer/deny
 //     decision comes back (proving the gate hook is wired and the policy parses).
 
 import { readState } from '../state.js';
 
-// TODO(wire): import { MEMORY_TOOL_CONTRACT_VERSION } from '@justfortytwo/memory'
-// TODO(wire): import { POLICY_SCHEMA_VERSION } from '@justfortytwo/gate'
-const EXPECTED_MEMORY_CONTRACT = 'TODO(wire): MEMORY_TOOL_CONTRACT_VERSION';
+// TODO(wire): import { GUIDE_TOOL_CONTRACT_VERSION } from '@justfortytwo/guide'
+// TODO(wire): import { POLICY_SCHEMA_VERSION } from '@justfortytwo/vogon'
+const EXPECTED_GUIDE_CONTRACT = 'TODO(wire): GUIDE_TOOL_CONTRACT_VERSION';
 const EXPECTED_POLICY_SCHEMA = 'TODO(wire): POLICY_SCHEMA_VERSION';
 
 export interface CheckResult {
@@ -30,15 +30,15 @@ export interface CheckResult {
 }
 
 /**
- * Boot the memory MCP server and assert its contract.
+ * Boot the guide MCP server and assert its contract.
  * TODO(wire):
- *   - spawn @justfortytwo/memory's MCP entry over stdio, ListTools, and assert
- *     every expected mcp__fortytwo-memory__* tool is present with the right schema.
- *   - compare the package's MEMORY_TOOL_CONTRACT_VERSION to EXPECTED_MEMORY_CONTRACT.
+ *   - spawn @justfortytwo/guide's MCP entry over stdio, ListTools, and assert
+ *     every expected mcp__fortytwo-guide__* tool is present with the right schema.
+ *   - compare the package's GUIDE_TOOL_CONTRACT_VERSION to EXPECTED_GUIDE_CONTRACT.
  */
-async function checkMemoryContract(): Promise<CheckResult> {
-  void EXPECTED_MEMORY_CONTRACT;
-  return { name: 'memory-mcp contract', ok: false, required: true, detail: 'TODO(wire): boot MCP + assert MEMORY_TOOL_CONTRACT_VERSION + tool schema' };
+async function checkGuideContract(): Promise<CheckResult> {
+  void EXPECTED_GUIDE_CONTRACT;
+  return { name: 'guide-mcp contract', ok: false, required: true, detail: 'TODO(wire): boot MCP + assert GUIDE_TOOL_CONTRACT_VERSION + tool schema' };
 }
 
 /**
@@ -52,8 +52,8 @@ async function checkGate(): Promise<CheckResult> {
 }
 
 /**
- * Assert the memory DB is fully migrated.
- * TODO(wire): query @justfortytwo/memory's migration state (_migration_state) and
+ * Assert the guide DB is fully migrated.
+ * TODO(wire): query @justfortytwo/guide's migration state (_migration_state) and
  * confirm no pending migrations against DB_PATH.
  */
 async function checkMigrations(): Promise<CheckResult> {
@@ -86,7 +86,7 @@ async function checkCompat(): Promise<CheckResult> {
  */
 export async function runDoctorChecks(): Promise<{ results: CheckResult[]; ok: boolean }> {
   const results = await Promise.all([
-    checkMemoryContract(),
+    checkGuideContract(),
     checkGate(),
     checkMigrations(),
     checkEmbedder(),

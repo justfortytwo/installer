@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// @justfortytwo/cli — the all-in-one installer + lifecycle CLI.
+// @justfortytwo/magrathea — the all-in-one installer + lifecycle CLI.
 //
 // Exposed as two bins (same entry):
 //   create-fortytwo   — the install-time alias (`npm create fortytwo` / `npx
@@ -7,9 +7,9 @@
 //   fortytwo          — the post-install lifecycle alias for everyday verbs.
 //
 // This is the operator's single surface over BOTH halves of the system:
-//   - the npm ENGINE (@justfortytwo/memory, /gate, /telegram, embedder), and
+//   - the npm ENGINE (@justfortytwo/guide, /vogon, /babelfish, embedder), and
 //   - the scaffolded PERSONA (CLAUDE.md + context/*, rendered from
-//     @justfortytwo/persona templates against .fortytwo/identity.json).
+//     @justfortytwo/ford templates against .fortytwo/identity.json).
 //
 // All sibling-package calls are stubs marked `// TODO(wire):` until the sibling
 // repos publish.

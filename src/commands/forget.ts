@@ -6,12 +6,12 @@
 // own turn-time memory writes.
 
 export async function runForget(_argv: string[]): Promise<number> {
-  // TODO(wire): delegate to @justfortytwo/memory's deletion/redaction surface.
+  // TODO(wire): delegate to @justfortytwo/guide's deletion/redaction surface.
   //   Selectors to support (from flags): --id <entryId>, --query <text> (semantic
   //   match then confirm), --since/--until (date range), --entity <name>.
   //   Flow: resolve matches -> show a confirmation summary (count + preview) ->
   //   require explicit --yes or interactive confirm -> delete from the store AND
   //   any derived indexes (FTS + embeddings) so recall can't resurface them.
   //   Report how many entries were removed.
-  throw new Error('TODO(wire): runForget — redact/delete matched memories via @justfortytwo/memory');
+  throw new Error('TODO(wire): runForget — redact/delete matched memories via @justfortytwo/guide');
 }

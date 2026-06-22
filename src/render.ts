@@ -1,14 +1,14 @@
 // render.ts — materialize the PERSONA SURFACE.
 //
 // Two-surface model:
-//   1. The npm "engine" (memory MCP, safety gate, channel adapters, embedder) —
+//   1. The npm "engine" (guide MCP, safety gate, channel adapters, embedder) —
 //      installed as @justfortytwo/* packages, wired as Claude Code plugins.
 //   2. The PERSONA — CLAUDE.md + context/* . This is NOT a plugin. It is per-user,
 //      gitignored, and personal. The CLI SCAFFOLDS it by rendering the
-//      @justfortytwo/persona package's `templates/` against the user's captured
+//      @justfortytwo/ford package's `templates/` against the user's captured
 //      `.fortytwo/identity.json`, guided by that package's `manifest.json`.
 //
-// manifest.json (in the persona package) declares:
+// manifest.json (in the ford package) declares:
 //   - which template files map to which output paths under the user's project
 //     (e.g. templates/OWNER.md.tmpl -> context/OWNER.md, CLAUDE.md.tmpl -> CLAUDE.md)
 //   - the required + optional template variables (sourced from identity.json)
@@ -24,7 +24,7 @@
 
 import type { Identity } from './state.js';
 
-/** Mirrors @justfortytwo/persona's manifest.json. TODO(wire): import its type. */
+/** Mirrors @justfortytwo/ford's manifest.json. TODO(wire): import its type. */
 export interface PersonaManifest {
   manifestVersion: number;
   /** template path (relative to persona pkg) -> output path (relative to project root) */
@@ -42,7 +42,7 @@ export interface PersonaManifest {
 export interface RenderOptions {
   /** Project root that receives CLAUDE.md + context/*. Defaults to cwd. */
   root?: string;
-  /** Resolved location of the @justfortytwo/persona package. */
+  /** Resolved location of the @justfortytwo/ford package. */
   personaPackageDir?: string;
   /** If true, report what WOULD be written without touching disk. */
   dryRun?: boolean;
@@ -54,15 +54,15 @@ export interface RenderResult {
 }
 
 /**
- * Locate the installed @justfortytwo/persona package and read its manifest.json.
+ * Locate the installed @justfortytwo/ford package and read its manifest.json.
  * TODO(wire): resolve via createRequire(import.meta.url).resolve(
- *   '@justfortytwo/persona/manifest.json') so we honor the user's installed
+ *   '@justfortytwo/ford/manifest.json') so we honor the user's installed
  *   version (latest-in-range), not a vendored copy.
  */
 export function loadPersonaManifest(_personaPackageDir?: string): PersonaManifest {
   // TODO(impl): read + parse manifest.json; validate manifestVersion against
   // what this CLI understands.
-  throw new Error('TODO(wire): loadPersonaManifest — read @justfortytwo/persona/manifest.json');
+  throw new Error('TODO(wire): loadPersonaManifest — read @justfortytwo/ford/manifest.json');
 }
 
 /**
