@@ -71,6 +71,24 @@ describe('buildMcpConfig', () => {
     expect(cfg.mcpServers['fortytwo-memory']).toBeDefined();
     expect(JSON.stringify(cfg.mcpServers['fortytwo-memory'])).toMatch(/fortytwo-memory|@justfortytwo\/memory/);
   });
+
+  it('threads the provided ollamaBaseUrl + embedModel into the memory server env', () => {
+    const cfg = buildMcpConfig(null, {
+      dbPath: 'db/fortytwo.db',
+      ollamaBaseUrl: 'https://ollama.lab.example.com',
+      embedModel: 'custom-embed:1b',
+    });
+    const mem = cfg.mcpServers['fortytwo-memory'] as { env: Record<string, string> };
+    expect(mem.env.OLLAMA_BASE_URL).toBe('https://ollama.lab.example.com');
+    expect(mem.env.EMBED_MODEL).toBe('custom-embed:1b');
+    expect(mem.env.DB_PATH).toBe('db/fortytwo.db');
+  });
+
+  it('defaults the ollama base url to localhost when not provided', () => {
+    const cfg = buildMcpConfig(null, { dbPath: 'db/fortytwo.db' });
+    const mem = cfg.mcpServers['fortytwo-memory'] as { env: Record<string, string> };
+    expect(mem.env.OLLAMA_BASE_URL).toBe('http://localhost:11434');
+  });
 });
 
 describe('engineInstallSpecs', () => {

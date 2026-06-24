@@ -113,13 +113,22 @@ export interface McpConfig {
 }
 
 /** Add (or replace) the `fortytwo-memory` MCP server entry, preserving others. */
-export function buildMcpConfig(existing: McpConfig | null, opts: { dbPath: string }): McpConfig {
+export function buildMcpConfig(
+  existing: McpConfig | null,
+  opts: { dbPath: string; ollamaBaseUrl?: string; embedModel?: string },
+): McpConfig {
   const cfg: McpConfig = existing ?? { mcpServers: {} };
   cfg.mcpServers = cfg.mcpServers ?? {};
   cfg.mcpServers['fortytwo-memory'] = {
     command: 'npx',
     args: ['-y', '@justfortytwo/memory'],
-    env: { DB_PATH: opts.dbPath, EMBED_MODEL, OLLAMA_BASE_URL: DEFAULT_OLLAMA_BASE_URL },
+    // The memory MCP server reads these from its launch env (this block), not .env —
+    // so the Ollama URL must be threaded here for a remote/custom endpoint to take effect.
+    env: {
+      DB_PATH: opts.dbPath,
+      EMBED_MODEL: opts.embedModel ?? EMBED_MODEL,
+      OLLAMA_BASE_URL: opts.ollamaBaseUrl ?? DEFAULT_OLLAMA_BASE_URL,
+    },
   };
   return cfg;
 }
@@ -145,12 +154,16 @@ function writeEnv(secrets: Record<string, string>, root: string): void {
   writeFileSync(path, mergeEnvContent(existing, secrets), 'utf8');
 }
 
-function writeMcpJson(root: string, dbPath: string): void {
+function writeMcpJson(root: string, dbPath: string, ollamaBaseUrl: string): void {
   const path = join(root, '.mcp.json');
   const existing: McpConfig | null = existsSync(path)
     ? (JSON.parse(readFileSync(path, 'utf8')) as McpConfig)
     : null;
-  writeFileSync(path, JSON.stringify(buildMcpConfig(existing, { dbPath }), null, 2) + '\n', 'utf8');
+  writeFileSync(
+    path,
+    JSON.stringify(buildMcpConfig(existing, { dbPath, ollamaBaseUrl }), null, 2) + '\n',
+    'utf8',
+  );
 }
 
 /** Engine packages (from compat ranges) not yet resolvable, as `name@range` install specs. */
@@ -339,7 +352,7 @@ export async function runInit(argv: string[]): Promise<number> {
   );
 
   const render = renderPersona(identity, { root });
-  writeMcpJson(root, opts.dbPath);
+  writeMcpJson(root, opts.dbPath, opts.ollamaBaseUrl);
   const provisionNotes = await provision({ ollamaBaseUrl: opts.ollamaBaseUrl, embedModel: EMBED_MODEL, dbPath: opts.dbPath });
   const pins = recordInstalledSet(root);
 
@@ -351,9 +364,16 @@ export async function runInit(argv: string[]): Promise<number> {
   for (const n of provisionNotes) out.write(`  ${n}\n`);
   out.write(`✓ recorded ${pins.length} installed engine package(s)\n`);
   if (!opts.secrets.ALLOWED_CHAT_IDS) {
-    out.write(`\nNext: set ALLOWED_CHAT_IDS in .env to your Telegram chat id, then start the channel bridge.\n`);
+    out.write(
+      `\nNext: start the channel bridge, then authorize a Telegram chat either way —\n` +
+      `  • run \`fortytwo pair\` and send \`/login <code>\` from your chat (no need to know your chat id), or\n` +
+      `  • set ALLOWED_CHAT_IDS in .env to your numeric chat id (static allowlist).\n`,
+    );
   } else {
-    out.write(`\nNext: start the channel bridge; messages from ${opts.secrets.ALLOWED_CHAT_IDS} are authorized.\n`);
+    out.write(
+      `\nNext: start the channel bridge; messages from ${opts.secrets.ALLOWED_CHAT_IDS} are authorized.\n` +
+      `  (Add more chats later with \`fortytwo pair\` → \`/login <code>\`.)\n`,
+    );
   }
   return 0;
 }
