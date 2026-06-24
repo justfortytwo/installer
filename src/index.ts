@@ -15,7 +15,8 @@
 // (npm-registry installs) and forget (a memory deletion API) report clearly that
 // they await publish / an upstream API rather than failing opaquely.
 
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
+import { realpathSync } from 'node:fs';
 import { runInit } from './commands/init.js';
 import { runPair } from './commands/pair.js';
 import { runDoctor } from './commands/doctor.js';
@@ -95,9 +96,16 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   }
 }
 
-// Run only when invoked as a bin — never when imported (e.g. by tests).
-const invokedDirectly = import.meta.url === pathToFileURL(process.argv[1] ?? '').href;
-if (invokedDirectly) {
+// Run only when invoked as a bin — never when imported (e.g. by tests). Compare
+// realpaths so the npm bin SYMLINK (node_modules/.bin/create-fortytwo -> dist/
+// index.js) still matches this module's real path.
+function invokedAsBin(): boolean {
+  const argv1 = process.argv[1];
+  if (!argv1) return false;
+  try { return realpathSync(argv1) === realpathSync(fileURLToPath(import.meta.url)); }
+  catch { return false; }
+}
+if (invokedAsBin()) {
   main()
     .then((code) => process.exit(code))
     .catch((err) => {
