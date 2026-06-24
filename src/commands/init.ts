@@ -363,17 +363,20 @@ export async function runInit(argv: string[]): Promise<number> {
   out.write(`✓ rendered persona: ${render.written.length} written, ${render.skipped.length} preserved\n`);
   for (const n of provisionNotes) out.write(`  ${n}\n`);
   out.write(`✓ recorded ${pins.length} installed engine package(s)\n`);
-  if (!opts.secrets.ALLOWED_CHAT_IDS) {
-    out.write(
-      `\nNext: start the channel bridge, then authorize a Telegram chat either way —\n` +
-      `  • run \`fortytwo pair\` and send \`/login <code>\` from your chat (no need to know your chat id), or\n` +
-      `  • set ALLOWED_CHAT_IDS in .env to your numeric chat id (static allowlist).\n`,
-    );
-  } else {
-    out.write(
-      `\nNext: start the channel bridge; messages from ${opts.secrets.ALLOWED_CHAT_IDS} are authorized.\n` +
-      `  (Add more chats later with \`fortytwo pair\` → \`/login <code>\`.)\n`,
-    );
+  // Telegram is an OPTIONAL channel; init only wires its secrets into .env when
+  // you pass them (--telegram-bot-token / --allowed-chat-ids, or the matching env
+  // vars). The bridge REFUSES TO START without TELEGRAM_BOT_TOKEN, so surface that
+  // requirement here rather than letting the bridge fail on first launch.
+  const next: string[] = ['\nNext — to use the Telegram channel (optional):'];
+  if (!opts.secrets.TELEGRAM_BOT_TOKEN) {
+    next.push("  • set TELEGRAM_BOT_TOKEN in .env — create a bot with @BotFather (the bridge won't start without it)");
   }
+  next.push('  • start the channel bridge');
+  if (opts.secrets.ALLOWED_CHAT_IDS) {
+    next.push(`  • ${opts.secrets.ALLOWED_CHAT_IDS} is already authorized — add more chats with \`fortytwo pair\` → \`/login <code>\``);
+  } else {
+    next.push('  • authorize a chat: run `fortytwo pair` and send `/login <code>`, or set ALLOWED_CHAT_IDS in .env');
+  }
+  out.write(next.join('\n') + '\n');
   return 0;
 }
