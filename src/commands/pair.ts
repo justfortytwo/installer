@@ -1,38 +1,72 @@
 // pair — issue a one-time `/login` pairing code for a channel.
 //
-// Unlike init (which also provisions), pair is the standalone "bind another
-// device/chat" verb. It mints a short-lived code; the owner sends `/login <code>`
-// from the target chat, and the channel adapter confirms the binding (adding the
-// chat to the allowlist and recording it in identity.json's `channels`).
-//
-// This is the lifecycle counterpart to `unbind`.
+// Mints a short-lived code and PERSISTS it (via @justfortytwo/telegram's
+// store-backed challenges) to the SAME bindings db the running bridge reads.
+// The owner sends `/login <code>` from the target chat; the bridge — a separate
+// process — redeems the persisted challenge and records the binding. This is the
+// dynamic counterpart to the static ALLOWED_CHAT_IDS allowlist, and the
+// lifecycle counterpart to `unbind`.
 
-import type { Identity } from '../state.js';
+import { resolve, dirname } from 'node:path';
+import { mkdirSync } from 'node:fs';
+import { loadTelegram } from '../engine.js';
 
-interface PairFlags {
+export interface PairFlags {
   /** Which channel to pair. Defaults to telegram (the only adapter at v0). */
-  channel?: 'telegram' | string;
-  /** Optional TTL override for the code. */
+  channel: string;
+  /** Optional TTL override (seconds) for the code. */
   ttlSeconds?: number;
 }
 
-export async function runPair(_argv: string[]): Promise<number> {
-  // BLOCKED: dynamic /login pairing requires that an issued challenge be
-  // redeemable by the SEPARATELY-RUNNING bridge. TelegramAdapter currently keeps
-  // pending challenges in an in-memory Map, so a code minted by this CLI process
-  // is invisible to the bridge process — cross-process pairing can't work until
-  // @justfortytwo/telegram persists challenges in its store. The path that works
-  // today is the static allowlist: set ALLOWED_CHAT_IDS in .env (fortytwo init
-  // writes it), which the bridge authorizes against directly.
-  void resolveChannel;
-  process.stderr.write(
-    'pair: dynamic /login pairing is not available yet (it needs cross-process ' +
-    'challenge persistence in @justfortytwo/telegram). For now, authorize a chat ' +
-    'by adding its id to ALLOWED_CHAT_IDS in .env.\n',
-  );
-  return 2;
+export function parsePairArgs(argv: string[]): PairFlags {
+  const f: PairFlags = { channel: 'telegram' };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === undefined || !a.startsWith('--')) continue;
+    const v = argv[++i] ?? '';
+    if (a === '--channel') f.channel = v || 'telegram';
+    else if (a === '--ttl') f.ttlSeconds = Number(v) || undefined;
+  }
+  return f;
 }
 
-function resolveChannel(_flags: PairFlags, _identity: Identity | null): string {
-  return 'telegram';
+/**
+ * The bindings db the bridge uses — MUST match @justfortytwo/telegram's bridge
+ * (`<root>/state/telegram-bindings.db`, overridable via TELEGRAM_BINDINGS_DB),
+ * or a code minted here would land in a db the bridge never reads.
+ */
+export function resolveBindingsDbPath(root: string): string {
+  return process.env.TELEGRAM_BINDINGS_DB
+    ? resolve(root, process.env.TELEGRAM_BINDINGS_DB)
+    : resolve(root, 'state', 'telegram-bindings.db');
+}
+
+type TgModule = {
+  SqliteBindingStore: new (dbPath?: string) => unknown;
+  TelegramAdapter: new (store: unknown, opts?: { ttlSeconds?: number }) => {
+    issueChallenge: (owner: string) => { code: string; ttl: number };
+  };
+};
+
+export async function runPair(argv: string[]): Promise<number> {
+  const flags = parsePairArgs(argv);
+  if (flags.channel !== 'telegram') {
+    process.stderr.write(`pair: unsupported channel "${flags.channel}" (only telegram at v0).\n`);
+    return 2;
+  }
+  const tg = (await loadTelegram()) as unknown as TgModule | null;
+  if (!tg || typeof tg.SqliteBindingStore !== 'function' || typeof tg.TelegramAdapter !== 'function') {
+    process.stderr.write('pair: @justfortytwo/telegram (>=0.1.1, with persisted challenges) is not installed.\n');
+    return 2;
+  }
+  const dbPath = resolveBindingsDbPath(process.cwd());
+  mkdirSync(dirname(dbPath), { recursive: true });
+  const store = new tg.SqliteBindingStore(dbPath);
+  const adapter = new tg.TelegramAdapter(store, flags.ttlSeconds ? { ttlSeconds: flags.ttlSeconds } : {});
+  const { code, ttl } = adapter.issueChallenge('owner');
+
+  process.stdout.write(`Pairing code: ${code}\n`);
+  process.stdout.write(`From your Telegram chat, send:  /login ${code}\n`);
+  process.stdout.write(`(valid ${Math.round(ttl / 60)} min — the running bridge binds that chat to you)\n`);
+  return 0;
 }

@@ -5,12 +5,9 @@
 // crashes the CLI — a missing sibling makes the dependent command/check report
 // "not installed" instead of throwing.
 
-import { createRequire } from 'node:module';
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, parse } from 'node:path';
-
-const require = createRequire(import.meta.url);
 
 /** Dynamically import an engine sibling; null if it is not installed. */
 export async function loadSibling<T = Record<string, unknown>>(spec: string): Promise<T | null> {
@@ -32,47 +29,28 @@ export const loadMemory = () =>
   }>('@justfortytwo/memory');
 export const loadTelegram = () => loadSibling('@justfortytwo/telegram');
 
-/** Installed version of a sibling (its package.json `version`), or null. */
+/**
+ * Installed version of a sibling (its package.json `version`), or null. Walks up
+ * ancestor `node_modules` dirs exactly like Node's resolver — pure fs, so it is
+ * immune to import-only `exports` maps (which defeat require.resolve) and to
+ * bundled test runners where import.meta.resolve is unavailable. Matches where
+ * loadSibling's dynamic import would find the package.
+ */
 export function readInstalledVersion(spec: string): string | null {
-  // Prefer the direct package.json subpath; packages with a restrictive
-  // `exports` map block it, so fall back to resolving the entry and walking up
-  // to the package.json whose `name` matches the spec.
-  const readVersion = (pkgPath: string): string | null => {
-    try {
-      return (JSON.parse(readFileSync(pkgPath, 'utf8')) as { version?: string }).version ?? null;
-    } catch {
-      return null;
-    }
-  };
-  try {
-    return readVersion(require.resolve(`${spec}/package.json`));
-  } catch {
-    /* exports-restricted — fall through */
-  }
-  try {
-    // Resolve the entry with the ESM resolver (matches the package's `import`
-    // condition — the same path loadSibling uses), then walk up to the
-    // package.json whose name matches. CJS require.resolve can't see
-    // import-only exports maps, so prefer import.meta.resolve.
-    let entry: string | null = null;
-    const esmResolve = (import.meta as { resolve?: (s: string) => string }).resolve;
-    if (esmResolve) {
-      try { entry = fileURLToPath(esmResolve(spec)); } catch { /* try CJS next */ }
-    }
-    if (!entry) entry = require.resolve(spec);
-    let dir = dirname(entry);
-    const root = parse(dir).root;
-    while (true) {
-      const candidate = join(dir, 'package.json');
-      if (existsSync(candidate)) {
-        const json = JSON.parse(readFileSync(candidate, 'utf8')) as { name?: string; version?: string };
-        if (json.name === spec) return json.version ?? null;
+  const segments = spec.split('/'); // e.g. ['@justfortytwo', 'gate']
+  let dir = dirname(fileURLToPath(import.meta.url));
+  const root = parse(dir).root;
+  while (true) {
+    const candidate = join(dir, 'node_modules', ...segments, 'package.json');
+    if (existsSync(candidate)) {
+      try {
+        return (JSON.parse(readFileSync(candidate, 'utf8')) as { version?: string }).version ?? null;
+      } catch {
+        return null;
       }
-      if (dir === root) return null;
-      dir = dirname(dir);
     }
-  } catch {
-    return null;
+    if (dir === root) return null;
+    dir = dirname(dir);
   }
 }
 
