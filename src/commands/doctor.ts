@@ -11,6 +11,8 @@
 // and memory's MEMORY_TOOL_CONTRACT_VERSION must equal what this CLI was built
 // against, and installed siblings must satisfy the declared compat ranges.
 
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import {
   loadGate, loadMemory, readInstalledVersion, readSelfCompatRanges,
   satisfiesRange, fetchOllamaModels, readMigrationState, type MigrationState,
@@ -30,6 +32,12 @@ export interface CheckResult {
   required: boolean;
 }
 
+/**
+ * Heartbeat staleness threshold: 3× the scheduler's 30s poll interval.
+ * If the heartbeat file is older than this, the daemon is considered stopped.
+ */
+export const HEARTBEAT_STALE_MS = 90_000;
+
 /** Everything the checks need, injectable so tests stay hermetic. */
 export interface DoctorDeps {
   loadGate: () => Promise<{ POLICY_SCHEMA_VERSION?: number } | null>;
@@ -41,6 +49,10 @@ export interface DoctorDeps {
   ollamaModels: () => Promise<string[] | null>;
   embedModel: string;
   migrationState: () => Promise<MigrationState>;
+  /** Returns the parsed heartbeat, or null if missing/unreadable. */
+  schedulerHeartbeat: () => { pid: number; ts: string } | null;
+  /** Returns the current time as an ISO string. */
+  now: () => string;
 }
 
 async function checkGate(deps: DoctorDeps): Promise<CheckResult> {
@@ -114,6 +126,22 @@ async function checkMigrations(deps: DoctorDeps): Promise<CheckResult> {
   }
 }
 
+async function checkSchedulerHeartbeat(deps: DoctorDeps): Promise<CheckResult> {
+  // Warn-only: a missing or stale scheduler daemon degrades proactive scheduling
+  // but never blocks the assistant — mirrors the embedder check pattern.
+  const name = 'scheduler daemon';
+  const hb = deps.schedulerHeartbeat();
+  if (hb === null) {
+    return { name, ok: false, required: false, detail: 'scheduler daemon not running (no heartbeat found)' };
+  }
+  const nowMs = new Date(deps.now()).getTime();
+  const tsMs = new Date(hb.ts).getTime();
+  if (nowMs - tsMs > HEARTBEAT_STALE_MS) {
+    return { name, ok: false, required: false, detail: `scheduler heartbeat stale — last seen ${hb.ts} (daemon may be stopped)` };
+  }
+  return { name, ok: true, required: false, detail: `scheduler daemon alive (pid ${hb.pid}, last seen ${hb.ts})` };
+}
+
 /**
  * Run all checks, return per-check results + aggregate. Reused by `update` as
  * the post-install verify step. Aggregate ok = every required check passed.
@@ -125,6 +153,7 @@ export async function runDoctorChecks(deps: DoctorDeps): Promise<{ results: Chec
     checkCompat(deps),
     checkEmbedder(deps),
     checkMigrations(deps),
+    checkSchedulerHeartbeat(deps),
   ]);
   const ok = results.every((r) => r.ok || !r.required);
   return { results, ok };
@@ -135,6 +164,7 @@ export function defaultDoctorDeps(): DoctorDeps {
   const ollamaBaseUrl = process.env.OLLAMA_BASE_URL ?? DEFAULT_OLLAMA_BASE_URL;
   const dbPath = process.env.DB_PATH ?? DEFAULT_DB_PATH;
   const embedModel = process.env.EMBED_MODEL ?? EMBED_MODEL;
+  const hbPath = join(dirname(dbPath), 'scheduler.heartbeat');
   return {
     loadGate,
     loadMemory,
@@ -143,6 +173,15 @@ export function defaultDoctorDeps(): DoctorDeps {
     ollamaModels: () => fetchOllamaModels(ollamaBaseUrl),
     embedModel,
     migrationState: () => readMigrationState(dbPath),
+    schedulerHeartbeat: () => {
+      try {
+        const raw = readFileSync(hbPath, 'utf-8');
+        return JSON.parse(raw) as { pid: number; ts: string };
+      } catch {
+        return null;
+      }
+    },
+    now: () => new Date().toISOString(),
   };
 }
 

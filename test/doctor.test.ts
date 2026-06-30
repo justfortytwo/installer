@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { runDoctorChecks, type DoctorDeps } from '../src/commands/doctor.js';
+import { runDoctorChecks, HEARTBEAT_STALE_MS, type DoctorDeps } from '../src/commands/doctor.js';
 import { satisfiesRange } from '../src/engine.js';
+
+const FRESH_ISO = '2026-06-30T12:00:00.000Z';
+// A "now" that is 10 seconds after FRESH_ISO — heartbeat is well within 90s.
+const NOW_FRESH = '2026-06-30T12:00:10.000Z';
+// A "now" that is 2× HEARTBEAT_STALE_MS after FRESH_ISO — heartbeat is stale.
+const NOW_STALE = new Date(new Date(FRESH_ISO).getTime() + HEARTBEAT_STALE_MS * 2).toISOString();
 
 // All-green deps; each test overrides one facet to drive a single check red.
 const goodDeps = (over: Partial<DoctorDeps> = {}): DoctorDeps => ({
@@ -12,6 +18,8 @@ const goodDeps = (over: Partial<DoctorDeps> = {}): DoctorDeps => ({
   ollamaModels: async () => ['qwen3-embedding:0.6b', 'llama3'],
   embedModel: 'qwen3-embedding:0.6b',
   migrationState: async () => 'ok',
+  schedulerHeartbeat: () => ({ pid: 42, ts: FRESH_ISO }),
+  now: () => NOW_FRESH,
   ...over,
 });
 
@@ -76,5 +84,43 @@ describe('runDoctorChecks', () => {
     const { results, ok } = await runDoctorChecks(goodDeps({ migrationState: async () => 'missing' }));
     expect(ok).toBe(false);
     expect(byName(results)['db migrations'].detail).toMatch(/init|migrat/i);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Scheduler heartbeat check (warn-only)
+  // ---------------------------------------------------------------------------
+
+  it('WARNS (does not fail) when no scheduler heartbeat file exists', async () => {
+    const { results, ok } = await runDoctorChecks(goodDeps({ schedulerHeartbeat: () => null }));
+    const check = byName(results)['scheduler daemon'];
+    expect(check.ok).toBe(false);
+    expect(check.required).toBe(false);
+    expect(check.detail).toMatch(/not running|no heartbeat/i);
+    expect(ok).toBe(true); // warn-only must not fail the aggregate
+  });
+
+  it('WARNS (does not fail) when the scheduler heartbeat is stale', async () => {
+    const { results, ok } = await runDoctorChecks(goodDeps({
+      schedulerHeartbeat: () => ({ pid: 42, ts: FRESH_ISO }),
+      now: () => NOW_STALE,
+    }));
+    const check = byName(results)['scheduler daemon'];
+    expect(check.ok).toBe(false);
+    expect(check.required).toBe(false);
+    expect(check.detail).toMatch(/stale|stopped/i);
+    expect(ok).toBe(true); // warn-only must not fail the aggregate
+  });
+
+  it('reports ok when the scheduler heartbeat is fresh', async () => {
+    const { results, ok } = await runDoctorChecks(goodDeps({
+      schedulerHeartbeat: () => ({ pid: 42, ts: FRESH_ISO }),
+      now: () => NOW_FRESH,
+    }));
+    const check = byName(results)['scheduler daemon'];
+    expect(check.ok).toBe(true);
+    expect(check.required).toBe(false);
+    expect(check.detail).toMatch(/alive/i);
+    expect(check.detail).toContain('42'); // pid present in detail
+    expect(ok).toBe(true);
   });
 });
