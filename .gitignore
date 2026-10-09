@@ -3,3 +3,6 @@ dist
 *.log
 .env
 *.tsbuildinfo
+.claude/
+.codegraph/
+.wolf/
