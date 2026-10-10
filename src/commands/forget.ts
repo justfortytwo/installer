@@ -9,7 +9,7 @@
 
 import { createInterface } from 'node:readline/promises';
 import { loadMemory } from '../engine.js';
-import { EMBED_MODEL, DEFAULT_DB_PATH } from './init.js';
+import { EMBED_MODEL, DEFAULT_DB_PATH, readProjectSetting } from './init.js';
 
 export interface ForgetFlags {
   id?: number;
@@ -24,7 +24,7 @@ export interface ForgetFlags {
 }
 
 export function parseForgetArgs(argv: string[]): ForgetFlags {
-  const f: ForgetFlags = { limit: 50, dbPath: process.env.DB_PATH ?? DEFAULT_DB_PATH };
+  const f: ForgetFlags = { limit: 50, dbPath: readProjectSetting('DB_PATH') ?? DEFAULT_DB_PATH };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === undefined) continue;
@@ -76,8 +76,10 @@ export async function runForget(argv: string[]): Promise<number> {
     if (f.id !== undefined) {
       rows = (await mem.query(h, { liveOnly: false, limit: 100000 })).filter((r) => r.id === f.id);
     } else if (f.query) {
-      const embedder = process.env.EMBED_MODEL
-        ? new mem.OllamaEmbedder(process.env.EMBED_MODEL, process.env.OLLAMA_BASE_URL)
+      // Shell env first, else the project's .env (the same model/endpoint init configured).
+      const embedModel = readProjectSetting('EMBED_MODEL');
+      const embedder = embedModel
+        ? new mem.OllamaEmbedder(embedModel, readProjectSetting('OLLAMA_BASE_URL'))
         : new mem.FakeEmbedder();
       rows = await mem.recall(h, embedder, f.query, f.limit);
     } else {

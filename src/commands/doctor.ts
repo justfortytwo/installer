@@ -17,7 +17,7 @@ import {
   loadGate, loadMemory, readInstalledVersion, readSelfCompatRanges,
   satisfiesRange, fetchOllamaModels, readMigrationState, type MigrationState,
 } from '../engine.js';
-import { EMBED_MODEL, DEFAULT_OLLAMA_BASE_URL, DEFAULT_DB_PATH } from './init.js';
+import { EMBED_MODEL, DEFAULT_OLLAMA_BASE_URL, DEFAULT_DB_PATH, readProjectSetting } from './init.js';
 
 // The contract versions this CLI was authored against. A sibling advertising a
 // different MAJOR has broken the contract — doctor must flag it loudly.
@@ -161,9 +161,10 @@ export async function runDoctorChecks(deps: DoctorDeps): Promise<{ results: Chec
 
 /** Wire the real engine siblings, Ollama, and memory DB into the checks. */
 export function defaultDoctorDeps(): DoctorDeps {
-  const ollamaBaseUrl = process.env.OLLAMA_BASE_URL ?? DEFAULT_OLLAMA_BASE_URL;
-  const dbPath = process.env.DB_PATH ?? DEFAULT_DB_PATH;
-  const embedModel = process.env.EMBED_MODEL ?? EMBED_MODEL;
+  // Shell env first, else what init saved in the project's .env.
+  const ollamaBaseUrl = readProjectSetting('OLLAMA_BASE_URL') ?? DEFAULT_OLLAMA_BASE_URL;
+  const dbPath = readProjectSetting('DB_PATH') ?? DEFAULT_DB_PATH;
+  const embedModel = readProjectSetting('EMBED_MODEL') ?? EMBED_MODEL;
   // Must match heartbeatPath() in @justfortytwo/scheduler/src/heartbeat.ts.
   const hbPath = join(dirname(dbPath), 'scheduler.heartbeat');
   return {

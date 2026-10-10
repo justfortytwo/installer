@@ -5,12 +5,13 @@ import { join } from 'node:path';
 import {
   resolveAnswers, mergeEnvContent, buildMcpConfig, buildVersionPins, engineInstallSpecs,
   collectChannelSecrets, resolveOllamaBaseUrl, ensureEmbedModel, EMBED_MODEL,
-  askList, askMissingAnswers, listPromptLabel, readEnvValue,
+  askList, askMissingAnswers, listPromptLabel, readEnvValue, readProjectSetting,
   type ManifestField, type EmbedModelDeps,
 } from '../src/commands/init.js';
 import { readSelfCompatRanges, fetchOllamaModels, pullOllamaModel } from '../src/engine.js';
 import { startFakeOllama } from './helpers/ollama.js';
 import { loadPersonaManifest, renderTemplate } from '../src/render.js';
+import { defaultDoctorDeps } from '../src/commands/doctor.js';
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'ft-init-')); });
@@ -231,6 +232,45 @@ describe('readEnvValue', () => {
     expect(readEnvValue('OLLAMA_BASE_URL=http://a:1\r\nOLLAMA_BASE_URL="http://b:1"\r\n', 'OLLAMA_BASE_URL')).toBe('http://b:1');
     expect(readEnvValue('# OLLAMA_BASE_URL=http://x:1\nXOLLAMA_BASE_URL=http://y:1\n', 'OLLAMA_BASE_URL')).toBeUndefined();
     expect(readEnvValue('OLLAMA_BASE_URL=\n', 'OLLAMA_BASE_URL')).toBeUndefined();
+  });
+});
+
+describe('readProjectSetting (shell env, else the project .env)', () => {
+  const KEYS = ['OLLAMA_BASE_URL', 'EMBED_MODEL', 'DB_PATH'] as const;
+  const saved: Partial<Record<string, string>> = {};
+  let cwd0: string;
+  beforeEach(() => {
+    cwd0 = process.cwd();
+    for (const k of KEYS) { saved[k] = process.env[k]; delete process.env[k]; }
+  });
+  afterEach(() => {
+    process.chdir(cwd0);
+    for (const k of KEYS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+  });
+
+  it('falls back to the value init saved in .env; the shell env wins; absent -> undefined', () => {
+    writeFileSync(join(dir, '.env'), 'OLLAMA_BASE_URL=http://ollama:11434\nEMBED_MODEL=qwen3-embedding:0.6b\n');
+    expect(readProjectSetting('OLLAMA_BASE_URL', dir)).toBe('http://ollama:11434');
+    process.env.OLLAMA_BASE_URL = 'http://shell:11434';
+    expect(readProjectSetting('OLLAMA_BASE_URL', dir)).toBe('http://shell:11434');
+    expect(readProjectSetting('DB_PATH', dir)).toBeUndefined();
+    expect(readProjectSetting('OLLAMA_BASE_URL', join(dir, 'no-such-project'))).toBe('http://shell:11434');
+    delete process.env.OLLAMA_BASE_URL;
+    expect(readProjectSetting('OLLAMA_BASE_URL', join(dir, 'no-such-project'))).toBeUndefined();
+  });
+
+  it('doctor checks the embedder at the OLLAMA_BASE_URL saved in .env (not localhost)', async () => {
+    const ollama = await startFakeOllama({ models: [EMBED_MODEL] });
+    try {
+      writeFileSync(join(dir, '.env'), `OLLAMA_BASE_URL=${ollama.url}\nEMBED_MODEL=${EMBED_MODEL}\nDB_PATH=data/x.db\n`);
+      process.chdir(dir);
+      const deps = defaultDoctorDeps();
+      expect(await deps.ollamaModels()).toEqual([EMBED_MODEL]);
+      expect(ollama.requests.map((r) => `${r.method} ${r.path}`)).toEqual(['GET /api/tags']);
+      expect(deps.embedModel).toBe(EMBED_MODEL);
+    } finally {
+      await ollama.close();
+    }
   });
 });
 

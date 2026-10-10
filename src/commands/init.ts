@@ -418,6 +418,19 @@ export function readEnvValue(content: string, key: string): string | undefined {
 }
 
 /**
+ * A runtime setting for a command run inside the project: the shell env wins,
+ * else the value `init` saved in `<root>/.env`. The CLI never loads .env into
+ * process.env, so without this fallback doctor/forget silently used defaults
+ * (e.g. localhost Ollama) whenever the variable was not exported.
+ */
+export function readProjectSetting(key: string, root: string = process.cwd()): string | undefined {
+  const fromShell = process.env[key]?.trim();
+  if (fromShell) return fromShell;
+  const envPath = join(root, '.env');
+  return existsSync(envPath) ? readEnvValue(readFileSync(envPath, 'utf8'), key) : undefined;
+}
+
+/**
  * Choose the Ollama endpoint for this init. Precedence:
  *   1. an explicit `--ollama-base-url` — used as-is, never re-asked;
  *   2. interactive: ask, with a default of the inherited OLLAMA_BASE_URL env,
