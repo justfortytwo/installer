@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import {
   resolveAnswers, mergeEnvContent, buildMcpConfig, buildVersionPins, engineInstallSpecs,
   collectChannelSecrets, resolveOllamaBaseUrl, ensureEmbedModel, EMBED_MODEL,
-  askList, askMissingAnswers, listPromptLabel,
+  askList, askMissingAnswers, listPromptLabel, readEnvValue,
   type ManifestField, type EmbedModelDeps,
 } from '../src/commands/init.js';
 import { readSelfCompatRanges, fetchOllamaModels, pullOllamaModel } from '../src/engine.js';
@@ -203,6 +203,16 @@ describe('resolveOllamaBaseUrl', () => {
     expect(await resolveOllamaBaseUrl({ flag: 'http://flag:11434', env: 'http://env:11434', ask })).toBe('http://flag:11434');
     expect(prompts).toEqual([]);
   });
+  it('re-run: the URL saved in .env is the Enter default (custom endpoint survives)', async () => {
+    const { ask, prompts } = asker('');
+    expect(await resolveOllamaBaseUrl({ saved: 'http://ollama:11434', ask })).toBe('http://ollama:11434');
+    expect(prompts[0]).toContain('Enter for http://ollama:11434');
+  });
+  it('an explicit OLLAMA_BASE_URL env beats the saved .env value; the flag beats both', async () => {
+    expect(await resolveOllamaBaseUrl({ env: 'http://env:1', saved: 'http://saved:1' })).toBe('http://env:1');
+    expect(await resolveOllamaBaseUrl({ flag: 'http://flag:1', env: 'http://env:1', saved: 'http://saved:1' })).toBe('http://flag:1');
+    expect(await resolveOllamaBaseUrl({ saved: 'http://saved:1' })).toBe('http://saved:1'); // --yes re-run
+  });
   it('non-interactive (no ask): env, else localhost', async () => {
     expect(await resolveOllamaBaseUrl({ env: 'http://ollama:11434' })).toBe('http://ollama:11434');
     expect(await resolveOllamaBaseUrl({})).toBe('http://localhost:11434');
@@ -212,6 +222,15 @@ describe('resolveOllamaBaseUrl', () => {
     expect(await resolveOllamaBaseUrl({ ask: retry.ask })).toBe('http://ollama:11434');
     expect(retry.prompts[1]).toContain('not an http(s) URL');
     await expect(resolveOllamaBaseUrl({ ask: asker('x', 'y', 'z').ask })).rejects.toThrow(/no valid Ollama base URL/);
+  });
+});
+
+describe('readEnvValue', () => {
+  it('reads a key from .env content (last wins, quotes stripped, absent/blank -> undefined)', () => {
+    expect(readEnvValue('A=1\nOLLAMA_BASE_URL=http://ollama:11434\nB=2\n', 'OLLAMA_BASE_URL')).toBe('http://ollama:11434');
+    expect(readEnvValue('OLLAMA_BASE_URL=http://a:1\r\nOLLAMA_BASE_URL="http://b:1"\r\n', 'OLLAMA_BASE_URL')).toBe('http://b:1');
+    expect(readEnvValue('# OLLAMA_BASE_URL=http://x:1\nXOLLAMA_BASE_URL=http://y:1\n', 'OLLAMA_BASE_URL')).toBeUndefined();
+    expect(readEnvValue('OLLAMA_BASE_URL=\n', 'OLLAMA_BASE_URL')).toBeUndefined();
   });
 });
 

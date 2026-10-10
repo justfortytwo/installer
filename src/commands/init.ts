@@ -407,22 +407,36 @@ const isHttpUrl = (v: string): boolean => {
   }
 };
 
+/** The value of `key` in .env content (last assignment wins; surrounding quotes stripped), or undefined. */
+export function readEnvValue(content: string, key: string): string | undefined {
+  let value: string | undefined;
+  for (const line of content.split(/\r?\n/)) {
+    const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
+    if (m && m[1] === key) value = m[2]!.trim().replace(/^(['"])(.*)\1$/, '$2');
+  }
+  return value || undefined;
+}
+
 /**
  * Choose the Ollama endpoint for this init. Precedence:
  *   1. an explicit `--ollama-base-url` — used as-is, never re-asked;
- *   2. interactive: ask, with the inherited OLLAMA_BASE_URL env (else
- *      http://localhost:11434) as the Enter-to-accept default; a typed URL is
- *      used exactly as entered (an invalid one is re-asked, up to 3 tries);
+ *   2. interactive: ask, with a default of the inherited OLLAMA_BASE_URL env,
+ *      else the value already saved in the project's .env (so re-running init
+ *      and pressing Enter keeps a custom endpoint), else http://localhost:11434;
+ *      a typed URL is used exactly as entered (an invalid one is re-asked, up to
+ *      3 tries);
  *   3. non-interactive (`ask` absent): that same default.
  * Pure: `ask` is injected, so it unit-tests without a TTY.
  */
 export async function resolveOllamaBaseUrl(opts: {
   flag?: string;
   env?: string;
+  /** OLLAMA_BASE_URL already in the project's .env (from a previous init). */
+  saved?: string;
   ask?: (prompt: string) => Promise<string>;
 }): Promise<string> {
   if (opts.flag) return opts.flag;
-  const fallback = opts.env?.trim() || DEFAULT_OLLAMA_BASE_URL;
+  const fallback = opts.env?.trim() || opts.saved?.trim() || DEFAULT_OLLAMA_BASE_URL;
   if (!opts.ask) return fallback;
   let prompt = `Ollama base URL — where the embedder runs (Enter for ${fallback}): `;
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -479,18 +493,24 @@ export async function runInit(argv: string[]): Promise<number> {
   // Interactively ask for the Ollama endpoint (Enter keeps the default) and offer
   // the optional Telegram secrets not already provided, so neither needs a second
   // manual .env edit. Non-TTY/--yes runs are unaffected (flags/env/defaults).
+  const envPath = join(root, '.env');
+  const urlSources = {
+    flag: opts.ollamaBaseUrl,
+    env: process.env.OLLAMA_BASE_URL,
+    saved: existsSync(envPath) ? readEnvValue(readFileSync(envPath, 'utf8'), 'OLLAMA_BASE_URL') : undefined,
+  };
   let ollamaBaseUrl: string;
   if (interactive) {
     const rl = createInterface({ input: process.stdin, output: process.stdout });
     try {
       const ask = (q: string) => rl.question(q);
-      ollamaBaseUrl = await resolveOllamaBaseUrl({ flag: opts.ollamaBaseUrl, env: process.env.OLLAMA_BASE_URL, ask });
+      ollamaBaseUrl = await resolveOllamaBaseUrl({ ...urlSources, ask });
       Object.assign(opts.secrets, await collectChannelSecrets(opts.secrets, ask));
     } finally {
       rl.close();
     }
   } else {
-    ollamaBaseUrl = await resolveOllamaBaseUrl({ flag: opts.ollamaBaseUrl, env: process.env.OLLAMA_BASE_URL });
+    ollamaBaseUrl = await resolveOllamaBaseUrl(urlSources);
   }
 
   // Seed runtime config alongside any provided secrets.

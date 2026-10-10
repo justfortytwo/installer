@@ -89,7 +89,9 @@ Ollama base URL — where the embedder runs (Enter for http://localhost:11434):
 
 Press Enter for a local install, or type another endpoint — e.g.
 `http://ollama:11434` when Ollama runs in a sibling container. The default shown
-is `$OLLAMA_BASE_URL` if it is set, else `http://localhost:11434`; an explicit
+is `$OLLAMA_BASE_URL` if it is set, else the URL already saved in `.env` by a
+previous `init` (so re-running and pressing Enter keeps it), else
+`http://localhost:11434`; an explicit
 `--ollama-base-url <url>` skips the question, and `--yes`/non-TTY runs use the
 default. The chosen URL is written to both `.env` and the memory server's
 `.mcp.json` entry, and `init` checks for the model on **that** server

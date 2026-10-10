@@ -79,6 +79,26 @@ describe('e2e: init -> doctor -> store/recall', () => {
     }
   });
 
+  it('re-running init keeps the custom Ollama URL saved in .env', async () => {
+    const ollama = await startFakeOllama({ models: ['qwen3-embedding:0.6b'] });
+    const prev = process.env.OLLAMA_BASE_URL;
+    try {
+      process.env.OLLAMA_BASE_URL = ollama.url;
+      expect(await runInit(['--yes'])).toBe(0); // first init saves the custom URL
+      delete process.env.OLLAMA_BASE_URL;        // a later shell without the env var
+      expect(await runInit(['--yes'])).toBe(0);
+      const env = readFileSync(join(dir, '.env'), 'utf8');
+      const mcp = JSON.parse(readFileSync(join(dir, '.mcp.json'), 'utf8'));
+      expect(env).toContain(`OLLAMA_BASE_URL=${ollama.url}\n`);
+      expect(env).not.toContain('localhost:11434');
+      expect(mcp.mcpServers['fortytwo-memory'].env.OLLAMA_BASE_URL).toBe(ollama.url);
+      expect(ollama.requests.filter((r) => r.path === '/api/tags')).toHaveLength(2); // both runs checked it
+    } finally {
+      if (prev === undefined) delete process.env.OLLAMA_BASE_URL; else process.env.OLLAMA_BASE_URL = prev;
+      await ollama.close();
+    }
+  });
+
   it('doctor reports every required check healthy after init', async () => {
     await runInit(['--yes', '--allowed-chat-ids', '555']);
     const { results, ok } = await runDoctorChecks(defaultDoctorDeps());
