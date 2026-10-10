@@ -99,6 +99,22 @@ describe('e2e: init -> doctor -> store/recall', () => {
     }
   });
 
+  it('re-running init keeps a custom DB_PATH saved in .env', async () => {
+    const prev = process.env.DB_PATH;
+    delete process.env.DB_PATH;
+    try {
+      expect(await runInit(['--yes', '--db-path', 'data/custom.db'])).toBe(0);
+      expect(await runInit(['--yes'])).toBe(0); // no flag, no env: the saved path must win over the default
+      const env = readFileSync(join(dir, '.env'), 'utf8');
+      const mcp = JSON.parse(readFileSync(join(dir, '.mcp.json'), 'utf8'));
+      expect(env).toContain('DB_PATH=data/custom.db\n');
+      expect(mcp.mcpServers['fortytwo-memory'].env.DB_PATH).toBe('data/custom.db');
+      expect(existsSync(join(dir, 'db', 'fortytwo.db'))).toBe(false); // no stray default DB created
+    } finally {
+      if (prev === undefined) delete process.env.DB_PATH; else process.env.DB_PATH = prev;
+    }
+  });
+
   it('doctor reports every required check healthy after init', async () => {
     await runInit(['--yes', '--allowed-chat-ids', '555']);
     const { results, ok } = await runDoctorChecks(defaultDoctorDeps());

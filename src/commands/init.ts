@@ -292,7 +292,8 @@ function parseInitArgs(argv: string[]): InitFlags {
   let noInstall = false;
   let answersFile: string | undefined;
   let ollamaBaseUrl: string | undefined;
-  let dbPath = process.env.DB_PATH ?? DEFAULT_DB_PATH;
+  // Shell env, else the DB_PATH a previous init saved in .env (a re-run keeps a custom path).
+  let dbPath = readProjectSetting('DB_PATH') ?? DEFAULT_DB_PATH;
   const SECRET_FLAGS: Record<string, string> = {
     'telegram-bot-token': 'TELEGRAM_BOT_TOKEN',
     'allowed-chat-ids': 'ALLOWED_CHAT_IDS',

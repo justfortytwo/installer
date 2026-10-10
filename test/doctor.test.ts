@@ -93,6 +93,13 @@ describe('runDoctorChecks', () => {
     expect(byName(results)['fortytwo.compat'].ok).toBe(false);
   });
 
+  it('names the Ollama endpoint it checked in the embedder detail', async () => {
+    const down = await runDoctorChecks(goodDeps({ ollamaModels: async () => null, ollamaBaseUrl: 'http://ollama:11434' }));
+    expect(byName(down.results)['embedder model'].detail).toBe('Ollama unreachable at http://ollama:11434 (semantic recall will degrade)');
+    const missing = await runDoctorChecks(goodDeps({ ollamaModels: async () => [], ollamaBaseUrl: 'http://ollama:11434' }));
+    expect(byName(missing.results)['embedder model'].detail).toMatch(/not pulled at http:\/\/ollama:11434/);
+  });
+
   it('WARNS (does not fail) when Ollama is unreachable — embedder is non-required', async () => {
     const { results, ok } = await runDoctorChecks(goodDeps({ ollamaModels: async () => null }));
     const embedder = byName(results)['embedder model'];

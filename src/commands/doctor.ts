@@ -47,6 +47,8 @@ export interface DoctorDeps {
   compatRanges: Record<string, string>;
   /** Installed Ollama model names, or null if unreachable. */
   ollamaModels: () => Promise<string[] | null>;
+  /** The Ollama endpoint ollamaModels queries (named in the embedder check's detail). */
+  ollamaBaseUrl?: string;
   embedModel: string;
   migrationState: () => Promise<MigrationState>;
   /** Returns the parsed heartbeat, or null if missing/unreadable. */
@@ -102,13 +104,14 @@ async function checkEmbedder(deps: DoctorDeps): Promise<CheckResult> {
   // fallback) but never blocks the assistant — mirrors wakeup.sh.
   const name = 'embedder model';
   const models = await deps.ollamaModels();
+  const at = deps.ollamaBaseUrl ? ` at ${deps.ollamaBaseUrl}` : '';
   if (models === null) {
-    return { name, ok: false, required: false, detail: 'Ollama unreachable (semantic recall will degrade)' };
+    return { name, ok: false, required: false, detail: `Ollama unreachable${at} (semantic recall will degrade)` };
   }
   if (!models.includes(deps.embedModel)) {
-    return { name, ok: false, required: false, detail: `model ${deps.embedModel} not pulled (run: ollama pull ${deps.embedModel})` };
+    return { name, ok: false, required: false, detail: `model ${deps.embedModel} not pulled${at} (run: ollama pull ${deps.embedModel})` };
   }
-  return { name, ok: true, required: false, detail: `${deps.embedModel} present` };
+  return { name, ok: true, required: false, detail: `${deps.embedModel} present${at}` };
 }
 
 async function checkMigrations(deps: DoctorDeps): Promise<CheckResult> {
@@ -173,6 +176,7 @@ export function defaultDoctorDeps(): DoctorDeps {
     installedVersion: readInstalledVersion,
     compatRanges: readSelfCompatRanges(),
     ollamaModels: () => fetchOllamaModels(ollamaBaseUrl),
+    ollamaBaseUrl,
     embedModel,
     migrationState: () => readMigrationState(dbPath),
     schedulerHeartbeat: () => {
