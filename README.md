@@ -12,7 +12,13 @@ assistant built on Claude Code. One package ships two bins:
 npm install @justfortytwo/installer   # in your project (or a fresh directory)
 npx create-fortytwo init              # capture your details, install the engine,
                                       # and scaffold the persona
+npx fortytwo start                    # run fortytwo (foreground; Ctrl+C stops it)
+npx fortytwo pair                     # in a second terminal: connect Telegram
 ```
+
+(Drop the `npx` if the `fortytwo` bin is on your `PATH`.) `pair` prints a code;
+send `/login <code>` to your bot from the chat you want to connect. Until then
+the bot ignores everyone, so it is safe to run `start` before any chat is paired.
 
 You only install **this** package — `init` installs the engine packages it needs
 on demand (`@justfortytwo/gate`, `/memory`, `/persona`, `/telegram`, `/scheduler`).
@@ -52,8 +58,11 @@ gitignored `.fortytwo/identity.json`; neither is ever committed.
 
 | Verb       | What it does |
 |------------|--------------|
+| `start`    | Run fortytwo in the foreground: load the project `.env` (the shell/container env wins over it), start every installed and configured service (the Telegram bridge needs `TELEGRAM_BOT_TOKEN`; the scheduler daemon needs nothing), prefix and forward their logs, and stop them all on Ctrl+C/SIGTERM. If a service exits, the others are stopped and `start` exits non-zero. It never daemonizes or restarts anything — see [Running as a service](#running-as-a-service). |
+| `status`   | Show whether fortytwo, the Telegram bridge and the scheduler are running, and whether memory is configured. Exits 0 when `fortytwo start` is running, 3 when not (usable as a health check). |
+| `stop`     | Stop the `fortytwo start` running for this project. It signals only the process recorded in `.fortytwo/runtime.json`, and only while that record's heartbeat is fresh; it never looks for processes by name. |
 | `init`     | Install any missing engine packages, then capture your assistant's name + owner details (interactive, or via flags/env for CI). Writes `.fortytwo/identity.json`, secrets + `ALLOWED_CHAT_IDS` to `.env`, wires `.mcp.json`, renders the persona, provisions local infra (pulls the embedder model, migrates the memory DB), and records the installed version set. |
-| `pair`     | Issue a one-time `/login` pairing code, persisted to the bridge's bindings db so the separately-running bridge can redeem it (the dynamic counterpart to the static `ALLOWED_CHAT_IDS` allowlist). |
+| `pair`     | Issue a one-time `/login` pairing code, persisted to the bridge's bindings db so the running bridge can redeem it (the dynamic counterpart to the static `ALLOWED_CHAT_IDS` allowlist). Refuses, and tells you to run `fortytwo start`, when Telegram isn't running; `--force` issues a code anyway (for a bridge you run yourself). |
 | `doctor`   | Health-check the engine: assert the gate's `POLICY_SCHEMA_VERSION` and memory's `MEMORY_TOOL_CONTRACT_VERSION` match what this CLI expects, confirm the memory DB is migrated, cross-check installed sibling versions against the declared compatibility ranges, and check the embedder model is pulled (warn-only). |
 | `update`   | Resolve the latest in-range version of each **installed** engine package, install it, rotate the rollback baseline, then run `doctor` to verify. `--dry-run` reports the resolved set without installing. |
 | `rollback` | Re-install the previous version set recorded before the last `update`, then run `doctor`. Manual by design — never auto-triggered, so you can inspect a bad upgrade first. |
@@ -63,10 +72,56 @@ gitignored `.fortytwo/identity.json`; neither is ever committed.
 
 Run `fortytwo <verb> --help` for verb-specific options.
 
-> **Status:** `init`, `pair`, `doctor`, `forget`, `unbind`, `update`, and
-> `rollback` are functional — `update` resolves latest-in-range from npm,
+> **Status:** `init`, `start`, `status`, `stop`, `pair`, `doctor`, `forget`,
+> `unbind`, `update`, and `rollback` are functional — `update` resolves latest-in-range from npm,
 > installs, rotates the rollback ledger, and post-verifies with `doctor`;
 > `rollback` restores the recorded previous set. `enrich` is still a stub.
+
+## Running as a service
+
+`fortytwo start` stays in the foreground on purpose, so the thing that runs it
+owns restarts and logs. Use it directly as the service command:
+
+```yaml
+# docker-compose.yml (excerpt)
+services:
+  fortytwo:
+    command: ["fortytwo", "start"]
+    working_dir: /workspace        # the project init was run in
+    init: true                     # reap processes the bridge's Claude sessions leave
+    restart: unless-stopped
+```
+
+```ini
+# systemd unit (excerpt)
+[Service]
+WorkingDirectory=/path/to/project
+ExecStart=/usr/bin/env npx fortytwo start
+Restart=on-failure
+```
+
+On SIGTERM it stops its services (SIGKILL after 10 s) and exits 0; if a service
+dies on its own, it stops the rest and exits non-zero, so `restart` policies
+kick in. Use `docker compose stop` / `systemctl stop` there rather than
+`fortytwo stop`.
+
+**Environment precedence** for the services: the process env (shell, container,
+systemd `Environment=`) > the project `.env` > defaults. `FORTYTWO_ROOT`
+defaults to the project directory. You never need to `source .env` yourself.
+
+### Advanced: running a service by hand
+
+For development and debugging, each service still ships its own bin. They do not
+load `.env`, so export it and `FORTYTWO_ROOT` yourself:
+
+```sh
+set -a; . ./.env; set +a
+FORTYTWO_ROOT=$PWD npx fortytwo-telegram-bridge   # Telegram bridge only
+npx fortytwo-scheduler                            # scheduler daemon only
+```
+
+`fortytwo status` won't show a hand-run bridge, and `fortytwo pair` needs
+`--force` to issue a code for it.
 
 ## Update safety
 

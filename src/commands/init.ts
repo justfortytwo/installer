@@ -410,12 +410,17 @@ const isHttpUrl = (v: string): boolean => {
 
 /** The value of `key` in .env content (last assignment wins; surrounding quotes stripped), or undefined. */
 export function readEnvValue(content: string, key: string): string | undefined {
-  let value: string | undefined;
+  return parseEnvContent(content)[key] || undefined;
+}
+
+/** All `KEY=value` assignments in .env content (last wins; surrounding quotes stripped; other lines ignored). */
+export function parseEnvContent(content: string): Record<string, string> {
+  const vars: Record<string, string> = {};
   for (const line of content.split(/\r?\n/)) {
     const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
-    if (m && m[1] === key) value = m[2]!.trim().replace(/^(['"])(.*)\1$/, '$2');
+    if (m) vars[m[1]!] = m[2]!.trim().replace(/^(['"])(.*)\1$/, '$2');
   }
-  return value || undefined;
+  return vars;
 }
 
 /**
@@ -460,6 +465,26 @@ export async function resolveOllamaBaseUrl(opts: {
     prompt = `  "${answer}" is not an http(s) URL (e.g. http://ollama:11434). Ollama base URL (Enter for ${fallback}): `;
   }
   throw new Error('init: no valid Ollama base URL given (expected http(s)://host:port)');
+}
+
+/**
+ * The closing "what now" lines. Points at the user-facing lifecycle
+ * (`fortytwo start`, `fortytwo pair`), never at the internal service bins.
+ * Telegram is optional: its bridge only starts with TELEGRAM_BOT_TOKEN, so say
+ * so here rather than let `start` skip it silently.
+ */
+export function nextSteps(o: { hasBotToken: boolean; allowedChatIds?: string }): string[] {
+  const lines = ['', 'Fortytwo is ready.', '', 'Start it with:', '  fortytwo start', ''];
+  if (!o.hasBotToken) {
+    lines.push('To use Telegram, first set TELEGRAM_BOT_TOKEN in .env (create a bot with @BotFather).');
+  }
+  if (o.allowedChatIds) {
+    lines.push(`Telegram chat(s) ${o.allowedChatIds} are already authorized. To connect another, with fortytwo running:`);
+  } else {
+    lines.push('Then connect Telegram with:');
+  }
+  lines.push('  fortytwo pair');
+  return lines;
 }
 
 export async function runInit(argv: string[]): Promise<number> {
@@ -550,26 +575,9 @@ export async function runInit(argv: string[]): Promise<number> {
   out.write(`✓ rendered persona: ${render.written.length} written, ${render.skipped.length} preserved\n`);
   for (const n of provisionNotes) out.write(`  ${n}\n`);
   out.write(`✓ recorded ${pins.length} installed engine package(s)\n`);
-  // Telegram is an OPTIONAL channel; init only wires its secrets into .env when
-  // you pass them (--telegram-bot-token / --allowed-chat-ids, or the matching env
-  // vars). The bridge REFUSES TO START without TELEGRAM_BOT_TOKEN, so surface that
-  // requirement here rather than letting the bridge fail on first launch.
-  const next: string[] = ['\nNext — to use the Telegram channel (optional):'];
-  if (!opts.secrets.TELEGRAM_BOT_TOKEN) {
-    next.push("  • set TELEGRAM_BOT_TOKEN in .env — create a bot with @BotFather (the bridge won't start without it)");
-  }
-  next.push('  • start the channel bridge');
-  if (opts.secrets.ALLOWED_CHAT_IDS) {
-    next.push(`  • ${opts.secrets.ALLOWED_CHAT_IDS} is already authorized — add more chats with \`fortytwo pair\` → \`/login <code>\``);
-  } else {
-    next.push('  • authorize a chat: run `fortytwo pair` and send `/login <code>`, or set ALLOWED_CHAT_IDS in .env');
-  }
-  // The scheduler is now part of the engine (installed above), but — like the
-  // bridge — it's a long-running process the operator starts, not a supervised
-  // service. Surface how to run it; doctor reports its liveness via the heartbeat.
-  next.push('\nNext — to run scheduled / proactive jobs (briefings, sweeps, reminders):');
-  next.push('  • start the scheduler daemon: `fortytwo-scheduler` under a restart loop (see @justfortytwo/scheduler)');
-  next.push('  • it seeds the recurring jobs on first boot; `fortytwo doctor` reports whether it is running');
-  out.write(next.join('\n') + '\n');
+  out.write(nextSteps({
+    hasBotToken: !!opts.secrets.TELEGRAM_BOT_TOKEN,
+    allowedChatIds: opts.secrets.ALLOWED_CHAT_IDS,
+  }).join('\n') + '\n');
   return 0;
 }

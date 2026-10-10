@@ -54,8 +54,21 @@ afterEach(() => {
 
 describe('e2e: init -> doctor -> store/recall', () => {
   it('init scaffolds the project and migrates the memory DB', async () => {
-    const code = await runInit(['--yes', '--allowed-chat-ids', '555']);
+    const write = process.stdout.write.bind(process.stdout);
+    let printed = '';
+    (process.stdout as unknown as { write: (s: string) => boolean }).write = (s: string) => { printed += s; return true; };
+    let code: number;
+    try {
+      code = await runInit(['--yes', '--allowed-chat-ids', '555']);
+    } finally {
+      (process.stdout as unknown as { write: typeof write }).write = write;
+    }
     expect(code).toBe(0);
+    // onboarding points at the user-facing lifecycle, not the internal service bins
+    expect(printed).toContain('Fortytwo is ready.');
+    expect(printed).toContain('  fortytwo start');
+    expect(printed).toContain('  fortytwo pair');
+    expect(printed).not.toMatch(/fortytwo-telegram-bridge|fortytwo-scheduler/);
     for (const f of ['CLAUDE.md', '.env', '.mcp.json', '.fortytwo/identity.json', '.fortytwo/state.json', 'context/OWNER.md', 'db/fortytwo.db']) {
       expect(existsSync(join(dir, f)), `expected ${f} to exist`).toBe(true);
     }

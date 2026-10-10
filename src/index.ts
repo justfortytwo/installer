@@ -25,6 +25,9 @@ import { runRollback } from './commands/rollback.js';
 import { runEnrich } from './commands/enrich.js';
 import { runForget } from './commands/forget.js';
 import { runUnbind } from './commands/unbind.js';
+import { runStart } from './commands/start.js';
+import { runStop } from './commands/stop.js';
+import { runStatus } from './commands/status.js';
 
 export type Verb =
   | 'init'
@@ -34,7 +37,10 @@ export type Verb =
   | 'rollback'
   | 'enrich'
   | 'forget'
-  | 'unbind';
+  | 'unbind'
+  | 'start'
+  | 'stop'
+  | 'status';
 
 const USAGE = `fortytwo — install + lifecycle CLI for fortytwo
 
@@ -45,7 +51,11 @@ Usage:
 Verbs:
   init        Capture identity, write .env + .fortytwo/identity.json, render
               persona, provision (embedder check/pull at OLLAMA_BASE_URL + db migrate).
-  pair        Issue a one-time /login pairing code for a channel (e.g. Telegram).
+  start       Run fortytwo in the foreground (Telegram bridge + scheduler), loading
+              .env; Ctrl+C or SIGTERM stops it. Use it as the container/service command.
+  status      Show whether fortytwo and its services are running (exit 3 if not).
+  stop        Stop the \`fortytwo start\` running for this project.
+  pair        Issue a one-time /login pairing code for Telegram (needs \`fortytwo start\`).
   doctor      Health-check the engine: memory MCP contract, gate, db migrations,
               embedder model, and installed versions vs fortytwo.compat.
   update      Resolve latest-in-range, install, run doctor, report. Points to
@@ -64,7 +74,7 @@ Run "fortytwo <verb> --help" for verb-specific options.
  */
 export function resolveVerb(argv: string[], invokedAs: string): Verb | 'help' | null {
   const first = argv[0];
-  const verbs: Verb[] = ['init', 'pair', 'doctor', 'update', 'rollback', 'enrich', 'forget', 'unbind'];
+  const verbs: Verb[] = ['init', 'start', 'stop', 'status', 'pair', 'doctor', 'update', 'rollback', 'enrich', 'forget', 'unbind'];
   if (first && (verbs as string[]).includes(first)) return first as Verb;
   if (!first || first === '--help' || first === '-h' || first === 'help') {
     // `create-fortytwo` with no verb implies init; otherwise show help.
@@ -87,6 +97,9 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     case 'enrich':   return runEnrich(rest);
     case 'forget':   return runForget(rest);
     case 'unbind':   return runUnbind(rest);
+    case 'start':    return runStart(rest);
+    case 'stop':     return runStop(rest);
+    case 'status':   return runStatus(rest);
     case 'help':
       process.stdout.write(USAGE);
       return 0;

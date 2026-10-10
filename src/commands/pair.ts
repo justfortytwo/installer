@@ -10,12 +10,16 @@
 import { resolve, dirname } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { loadTelegram } from '../engine.js';
+import { liveRuntime, serviceRunning } from '../runtime.js';
+import { readProjectSetting } from './init.js';
 
 export interface PairFlags {
   /** Which channel to pair. Defaults to telegram (the only adapter at v0). */
   channel: string;
   /** Optional TTL override (seconds) for the code. */
   ttlSeconds?: number;
+  /** Issue a code even though `fortytwo start` is not running Telegram (e.g. a hand-run bridge). */
+  force?: boolean;
 }
 
 export function parsePairArgs(argv: string[]): PairFlags {
@@ -23,6 +27,7 @@ export function parsePairArgs(argv: string[]): PairFlags {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === undefined || !a.startsWith('--')) continue;
+    if (a === '--force') { f.force = true; continue; }
     const v = argv[++i] ?? '';
     if (a === '--channel') f.channel = v || 'telegram';
     else if (a === '--ttl') f.ttlSeconds = Number(v) || undefined;
@@ -36,9 +41,30 @@ export function parsePairArgs(argv: string[]): PairFlags {
  * or a code minted here would land in a db the bridge never reads.
  */
 export function resolveBindingsDbPath(root: string): string {
-  return process.env.TELEGRAM_BINDINGS_DB
-    ? resolve(root, process.env.TELEGRAM_BINDINGS_DB)
-    : resolve(root, 'state', 'telegram-bindings.db');
+  // Shell env, else the project's .env — the same value `fortytwo start` passes the bridge.
+  const custom = readProjectSetting('TELEGRAM_BINDINGS_DB', root);
+  return custom ? resolve(root, custom) : resolve(root, 'state', 'telegram-bindings.db');
+}
+
+/**
+ * Why a code minted now could not be redeemed, or null if Telegram is running
+ * under `fortytwo start`. A code is only useful while the bridge is up to read
+ * `/login <code>`, so pair refuses to print one otherwise.
+ */
+export function telegramUnavailableMessage(root: string, nowMs: number = Date.now()): string | null {
+  const runtime = liveRuntime(root, nowMs);
+  if (serviceRunning(runtime, 'telegram')) return null;
+  const skipped = runtime?.skipped.find((s) => s.name === 'telegram');
+  return [
+    skipped ? `Telegram is not running (${skipped.reason}).` : 'Telegram is not running.',
+    ...(skipped ? ['Fix that in .env, then restart Fortytwo:'] : ['Start Fortytwo with:']),
+    '  fortytwo start',
+    '',
+    'Then run:',
+    '  fortytwo pair',
+    '',
+    '(Running the bridge yourself? `fortytwo pair --force` issues a code anyway.)',
+  ].join('\n');
 }
 
 type TgModule = {
@@ -53,6 +79,13 @@ export async function runPair(argv: string[]): Promise<number> {
   if (flags.channel !== 'telegram') {
     process.stderr.write(`pair: unsupported channel "${flags.channel}" (only telegram at v0).\n`);
     return 2;
+  }
+  if (!flags.force) {
+    const why = telegramUnavailableMessage(process.cwd());
+    if (why) {
+      process.stderr.write(why + '\n');
+      return 1;
+    }
   }
   const tg = (await loadTelegram()) as unknown as TgModule | null;
   if (!tg || typeof tg.SqliteBindingStore !== 'function' || typeof tg.TelegramAdapter !== 'function') {

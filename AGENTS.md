@@ -7,7 +7,7 @@
 - `create-fortytwo` runs `init` when called with no verb.
 - `fortytwo <verb>` is used day to day.
 
-The verbs are `init`, `pair`, `doctor`, `update`, `rollback`, `enrich`, `forget` and `unbind` (see README.md for what each does). `enrich` is still a stub: it throws `TODO(impl)`.
+The verbs are `init`, `start`, `status`, `stop`, `pair`, `doctor`, `update`, `rollback`, `enrich`, `forget` and `unbind` (see README.md for what each does). `enrich` is still a stub: it throws `TODO(impl)`.
 
 The CLI covers both of fortytwo's surfaces:
 1. **The npm engine**: the `@justfortytwo/{memory,gate,persona,telegram,scheduler}` packages.
@@ -22,10 +22,12 @@ src/
                     fortytwo.compat reader, minimal semver caret matcher, Ollama + migration probes
   state.ts          .fortytwo/identity.json (answers) + .fortytwo/state.json (version set / rollback ledger)
   render.ts         persona renderer (managed vs captured outputs, idempotent)
+  runtime.ts        foreground supervisor behind `fortytwo start` + .fortytwo/runtime.json ownership
   commands/
     init.ts         answer resolution, .env merge, .mcp.json, engine auto-install, provisioning
     doctor.ts       health checks (DoctorDeps injection); scheduler heartbeat check
     update.ts       update + rollback logic (rollback.ts just re-exports runRollback)
+    start.ts, status.ts, stop.ts   thin wrappers over runtime.ts
     pair.ts, unbind.ts, forget.ts, enrich.ts
 test/               vitest suites (*.test.ts), incl. e2e.test.ts
 .github/workflows/ci.yml   delegates to justfortytwo/.github node-ci.yml
@@ -67,8 +69,9 @@ Requires Node >= 20 (`engines`). Node 20 or 22 LTS is recommended because memory
 - Secrets and `ALLOWED_CHAT_IDS` go only to the gitignored `.env`. `identity.json` holds non-secret answers. Never commit either file, and never prompt for secrets that flags or env can supply.
 - `init` writes a `fortytwo-memory` entry into `.mcp.json` (`npx -y @justfortytwo/memory`) and passes `DB_PATH`/`EMBED_MODEL`/`OLLAMA_BASE_URL` through that entry's env. The memory server reads those settings from there, not from `.env`. The defaults are `db/fortytwo.db`, `qwen3-embedding:0.6b` and `http://localhost:11434`.
 - Answer precedence in `resolveAnswers`: answers-file, then `FORTYTWO_*` env, then flags, then the manifest default.
+- **Runtime lifecycle (`start`/`status`/`stop`):** `fortytwo start` is a foreground supervisor only. It spawns each service's own bin (`fortytwo-telegram-bridge`, `fortytwo-scheduler`) with `node`, cwd = project, env = process env > `.env` > `FORTYTWO_ROOT=<project>`, never detached, and never restarts them (Docker/systemd own that). No service logic belongs here. `.fortytwo/runtime.json` (supervisor pid + heartbeat + children) is the only ownership record; it counts as live only with a fresh heartbeat (`RUNTIME_STALE_MS`) and a living pid. `stop` signals only that pid; never add process discovery by name. `pair` refuses to print a code unless Telegram is running under `start` (`--force` overrides).
 - **Cross-repo path contracts:**
-  - `pair` must write to the same bindings DB that the telegram bridge reads: `state/telegram-bindings.db`, or `TELEGRAM_BINDINGS_DB` if set.
+  - `pair` must write to the same bindings DB that the telegram bridge reads: `state/telegram-bindings.db`, or `TELEGRAM_BINDINGS_DB` if set (shell or `.env`). The bridge resolves it against `FORTYTWO_ROOT`, which `start` sets to the project.
   - `doctor` reads `<dirname(DB_PATH)>/scheduler.heartbeat`, which must match `heartbeatPath()` in `../scheduler/src/heartbeat.ts`. Its stale threshold is 90s (3 × the scheduler's 30s poll).
   - If you change a path on one side, change it on the other side too.
 - `doctor` checks fail as **required** or as warn-only. Ollama/embedder and the scheduler daemon are warn-only. It asserts the gate's `POLICY_SCHEMA_VERSION` and memory's `MEMORY_TOOL_CONTRACT_VERSION`.

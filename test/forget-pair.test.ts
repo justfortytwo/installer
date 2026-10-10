@@ -1,10 +1,36 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseForgetArgs, hasForgetSelector, runForget } from '../src/commands/forget.js';
 import { parsePairArgs, resolveBindingsDbPath, runPair } from '../src/commands/pair.js';
 import { linkEngineInto } from './helpers/engine.js';
+import { runtimeStatePath } from '../src/runtime.js';
+
+/** Record a live `fortytwo start` running Telegram in `root` (this test process stands in for it). */
+function markTelegramRunning(root: string): void {
+  const now = new Date().toISOString();
+  mkdirSync(join(root, '.fortytwo'), { recursive: true });
+  writeFileSync(runtimeStatePath(root), JSON.stringify({
+    pid: process.pid, startedAt: now, heartbeatAt: now,
+    services: [{ name: 'telegram', pid: process.pid, state: 'running' }], skipped: [],
+  }));
+}
+/** Run `fn` with process.stdout/stderr captured. */
+async function captured<T>(fn: () => Promise<T>): Promise<{ result: T; out: string; err: string }> {
+  const o = process.stdout.write.bind(process.stdout);
+  const e = process.stderr.write.bind(process.stderr);
+  let out = '';
+  let err = '';
+  (process.stdout as unknown as { write: (s: string) => boolean }).write = (s: string) => { out += s; return true; };
+  (process.stderr as unknown as { write: (s: string) => boolean }).write = (s: string) => { err += s; return true; };
+  try {
+    return { result: await fn(), out, err };
+  } finally {
+    (process.stdout as unknown as { write: typeof o }).write = o;
+    (process.stderr as unknown as { write: typeof e }).write = e;
+  }
+}
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'ft-fp-')); });
@@ -59,10 +85,39 @@ describe('forget (integration: real deletion via @justfortytwo/memory)', () => {
   });
 });
 
+describe('pair without a running Telegram runtime', () => {
+  it('prints how to start fortytwo and issues NO code', async () => {
+    const cwd0 = process.cwd();
+    linkEngineInto(dir);
+    process.chdir(dir);
+    try {
+      const { result, out, err } = await captured(() => runPair([]));
+      expect(result).toBe(1);
+      expect(out).not.toMatch(/Pairing code/);
+      expect(err).toContain('Telegram is not running.\nStart Fortytwo with:\n  fortytwo start');
+    } finally {
+      process.chdir(cwd0);
+    }
+  });
+  it('--force issues a code anyway (for a hand-run bridge)', async () => {
+    const cwd0 = process.cwd();
+    linkEngineInto(dir);
+    process.chdir(dir);
+    try {
+      const { result, out } = await captured(() => runPair(['--force']));
+      expect(result).toBe(0);
+      expect(out).toMatch(/Pairing code: \d+/);
+    } finally {
+      process.chdir(cwd0);
+    }
+  });
+});
+
 describe('pair (integration: CLI-issued code redeemed cross-process)', () => {
   it('issues a code persisted to the bridge bindings db that a separate adapter redeems', async () => {
     const cwd0 = process.cwd();
     linkEngineInto(dir); // runPair resolves telegram from the project (cwd)
+    markTelegramRunning(dir); // pair only issues a code while the bridge is up
     process.chdir(dir);
     try {
       // capture the printed code
