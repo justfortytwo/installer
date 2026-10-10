@@ -347,6 +347,9 @@ describe('declared engine compat', () => {
     expect(engineInstallSpecs(compat, () => false)).toContain('@justfortytwo/telegram@1.0.0-1');
     expect(Object.keys(compat)).not.toContain('@justfortytwo/runner');
   });
+  it('pins scheduler 1.0.0-1: 1.0.0-0 declares a telegram peer that rejects telegram 1.0.0-1 (ERESOLVE)', () => {
+    expect(readSelfCompatRanges()['@justfortytwo/scheduler']).toBe('1.0.0-1');
+  });
   it('pins persona to the exact 1.0.0-0 pre-release (a caret would never select it)', () => {
     expect(readSelfCompatRanges()['@justfortytwo/persona']).toBe('1.0.0-0');
   });
