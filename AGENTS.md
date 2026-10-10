@@ -18,7 +18,7 @@ The CLI covers both of fortytwo's surfaces:
 ```
 src/
   index.ts          verb dispatch (resolveVerb/main); runs only when invoked as a bin (realpath guard)
-  engine.ts         dynamic-import access to engine siblings, installed-version lookup,
+  engine.ts         project-rooted sibling lookup (findSiblingDir) + dynamic import, installed-version lookup,
                     fortytwo.compat reader, minimal semver caret matcher, Ollama + migration probes
   state.ts          .fortytwo/identity.json (answers) + .fortytwo/state.json (version set / rollback ledger)
   render.ts         persona renderer (managed vs captured outputs, idempotent)
@@ -44,7 +44,7 @@ Requires Node >= 20 (`engines`). Node 20 or 22 LTS is recommended because memory
 ## Testing notes
 
 - `test/e2e.test.ts` and the doctor/forget/pair paths import the **real** sibling packages, for example `@justfortytwo/memory` with its `FakeEmbedder` and a real sqlite DB. These siblings are not declared in `package.json` at all (only in `fortytwo.compat`), so `npm ci` does **not** install them. Locally, those tests need the siblings resolvable through `node_modules`, either installed or linked. In CI, the shared workflow takes `siblings: "gate memory persona telegram"`. `scheduler` is not in that list.
-- Tests use `mkdtempSync(tmpdir())` sandboxes, and e2e tests `process.chdir` into them. Restore cwd and env in `afterEach`.
+- Tests use `mkdtempSync(tmpdir())` sandboxes, and e2e tests `process.chdir` into them. Restore cwd and env in `afterEach`. A test that chdirs into a sandbox and needs real siblings must call `linkEngineInto(dir)` (`test/helpers/engine.ts`), since siblings resolve from the project, not from this repo.
 - Unit tests target the pure, exported helpers rather than the fs/spawn wrappers. Examples: `resolveAnswers`, `mergeEnvContent`, `buildMcpConfig`, `engineInstallSpecs`, `pickLatestInRange`, `performUpdate`/`performRollback` with injected deps, and `runDoctorChecks(deps)`. Keep new logic in that testable form.
 
 ## Code conventions
@@ -60,7 +60,7 @@ Requires Node >= 20 (`engines`). Node 20 or 22 LTS is recommended because memory
 
 - **Engine siblings are undeclared at the npm level.** Reach them only through `loadSibling`/`loadGate`/`loadMemory`/`loadTelegram` in `engine.ts`, which use dynamic import and return `null` if the package is missing. Never add a static import of an `@justfortytwo/*` package, because a partial install must not crash the CLI.
 - **`fortytwo.compat` is the only version list.** `init` (auto-install), `doctor` (range cross-check) and `update` (latest-in-range) all read it. The siblings used to be duplicated as optional `peerDependencies`; that was removed because the two lists drifted (`fix(pkg): reconcile peerDependencies with fortytwo.compat`) and because npm validates optional peers against already-installed packages, so upgrading the installer past a sibling's range hard-failed with `ERESOLVE`. Do not re-add `@justfortytwo/*` to `dependencies`/`peerDependencies`; a test enforces this.
-- `readInstalledVersion` walks up the ancestor `node_modules` directories on purpose instead of using `require.resolve`, so that `exports` maps cannot break it. Keep that approach.
+- **Siblings resolve from the TARGET PROJECT, never from the installer.** Under `npx create-fortytwo` the installer runs from npm's exec cache (`~/.npm/_npx/<hash>/node_modules`), a separate tree from the project where `init` installs the engine. `findSiblingDir` (engine.ts) walks up `node_modules` from the project root (`process.cwd()`); `loadSibling`, `readInstalledVersion` and `loadPersonaManifest` all go through it, and `loadSibling` imports the resolved ESM entry by file URL. Never use a bare `import(spec)`, `createRequire(import.meta.url)` or `require.resolve` for siblings (the latter also fails on gate/telegram's import-only `exports`). There is deliberately no fallback to the installer's own tree. `test/topology.test.ts` guards this.
 - `satisfiesRange` is a deliberately minimal matcher. It handles exact versions and `^` ranges, including npm's 0.x rule. Do not add a semver dependency, and do not use range forms it cannot parse.
 - **Render idempotence:** MANAGED outputs are rewritten on every run. CAPTURED outputs are written once and belong to the user afterwards. Never clobber user edits. `render.ts` also guards against path traversal and prototype pollution, so keep those guards.
 - `state.json` writes are atomic (a tmp file, then rename). Rollback is **single-step** (`previous` only) and **manual**; it is never triggered automatically. Re-recording an identical set must not overwrite `previous`.

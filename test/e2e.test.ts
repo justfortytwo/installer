@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { runInit } from '../src/commands/init.js';
 import { runDoctorChecks, defaultDoctorDeps } from '../src/commands/doctor.js';
+import { linkEngineInto } from './helpers/engine.js';
 
 // Required manifest fields with no default — must be supplied or init refuses.
 const REQUIRED_ANSWERS: Record<string, string> = {
@@ -35,6 +36,7 @@ const setEnv: string[] = [];
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'ft-e2e-'));
+  linkEngineInto(dir); // the engine lives in the project, as after a real `init` install
   cwd0 = process.cwd();
   process.chdir(dir);
   for (const [k, v] of Object.entries(REQUIRED_ANSWERS)) {

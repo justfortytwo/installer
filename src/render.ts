@@ -15,8 +15,8 @@
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
-import { createRequire } from 'node:module';
 import type { Identity, Answers } from './state.js';
+import { findSiblingDir } from './engine.js';
 
 /** Maps each persona template to an output path + render mode. */
 export interface PersonaFile {
@@ -94,22 +94,27 @@ export function renderTemplate(template: string, answers: Answers): string {
 /**
  * Locate the persona package and read its manifest. With `personaPackageDir`
  * (tests, or an explicitly-resolved path) we read `<dir>/manifest.json`;
- * otherwise we resolve `@justfortytwo/persona/manifest.json` from the installed
- * dependency so we honor the user's installed version. The manifest's `files`
+ * otherwise we locate `@justfortytwo/persona` in the TARGET PROJECT's
+ * node_modules (from `projectRoot`, not from this module: under npx the installer
+ * runs from npm's exec cache, a separate tree) so we honor the installed version. The manifest's `files`
  * map drives rendering; `fields` (required flag) gives the required/optional
  * var split; templates live under `<packageDir>/templates`.
  */
-export function loadPersonaManifest(personaPackageDir?: string): PersonaManifest {
-  let manifestPath: string;
+export function loadPersonaManifest(personaPackageDir?: string, projectRoot: string = process.cwd()): PersonaManifest {
   let pkgDir: string;
   if (personaPackageDir) {
     pkgDir = resolve(personaPackageDir);
-    manifestPath = join(pkgDir, 'manifest.json');
   } else {
-    const require = createRequire(import.meta.url);
-    manifestPath = require.resolve('@justfortytwo/persona/manifest.json');
-    pkgDir = dirname(manifestPath);
+    const found = findSiblingDir('@justfortytwo/persona', projectRoot);
+    if (!found) {
+      throw new Error(
+        `@justfortytwo/persona is not installed in ${resolve(projectRoot)} (looked in node_modules up from there). ` +
+        'Run `fortytwo init` (it installs the engine) or `npm install @justfortytwo/persona`.',
+      );
+    }
+    pkgDir = found;
   }
+  const manifestPath = join(pkgDir, 'manifest.json');
   const raw = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
     manifestVersion?: number;
     files?: PersonaFile[];
@@ -139,7 +144,7 @@ export function renderPersona(identity: Identity, opts: RenderOptions = {}): Ren
   let files = opts.files;
   let tplRoot = opts.templatesDir ? resolve(opts.templatesDir) : undefined;
   if (!files || !tplRoot) {
-    const manifest = loadPersonaManifest(opts.personaPackageDir);
+    const manifest = loadPersonaManifest(opts.personaPackageDir, root);
     files = files ?? manifest.files;
     tplRoot = tplRoot ?? resolve(manifest.templatesDir);
   }

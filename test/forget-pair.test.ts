@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseForgetArgs, hasForgetSelector, runForget } from '../src/commands/forget.js';
 import { parsePairArgs, resolveBindingsDbPath, runPair } from '../src/commands/pair.js';
+import { linkEngineInto } from './helpers/engine.js';
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'ft-fp-')); });
@@ -61,6 +62,7 @@ describe('forget (integration: real deletion via @justfortytwo/memory)', () => {
 describe('pair (integration: CLI-issued code redeemed cross-process)', () => {
   it('issues a code persisted to the bridge bindings db that a separate adapter redeems', async () => {
     const cwd0 = process.cwd();
+    linkEngineInto(dir); // runPair resolves telegram from the project (cwd)
     process.chdir(dir);
     try {
       // capture the printed code

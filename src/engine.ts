@@ -8,13 +8,74 @@
 // "not installed" instead of throwing.
 
 import { readFileSync, existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join, parse } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { dirname, join, parse, resolve } from 'node:path';
 
-/** Dynamically import an engine sibling; null if it is not installed. */
-export async function loadSibling<T = Record<string, unknown>>(spec: string): Promise<T | null> {
+// PROJECT-ROOTED RESOLUTION. Siblings live in the TARGET PROJECT's node_modules,
+// never next to the installer: under `npx create-fortytwo` the installer runs from
+// npm's exec cache (~/.npm/_npx/<hash>/node_modules), a separate tree. So every
+// lookup below starts at the project root (the cwd every command operates on),
+// not at import.meta.url — a bare `import(spec)` / `createRequire(import.meta.url)`
+// would resolve from the exec cache and miss the engine `init` just installed.
+
+/**
+ * Directory of an installed sibling, found by walking up `<dir>/node_modules`
+ * from the project root exactly like Node's resolver; null if absent. Pure fs,
+ * so import-only `exports` maps (gate, telegram) can't defeat it the way they
+ * defeat require.resolve.
+ */
+export function findSiblingDir(spec: string, projectRoot: string = process.cwd()): string | null {
+  const segments = spec.split('/'); // e.g. ['@justfortytwo', 'gate']
+  let dir = resolve(projectRoot);
+  const root = parse(dir).root;
+  while (true) {
+    const candidate = join(dir, 'node_modules', ...segments);
+    if (existsSync(join(candidate, 'package.json'))) return candidate;
+    if (dir === root) return null;
+    dir = dirname(dir);
+  }
+}
+
+/**
+ * The ESM entry file of a package's root export, relative to its dir: `exports`
+ * (string, `"."`, or a bare conditions object; conditions `import` > `node` >
+ * `default`, nested allowed), then `main`, then `index.js`. Null if the root is
+ * not exported for import.
+ */
+export function resolveEsmEntry(pkg: { exports?: unknown; main?: unknown }): string | null {
+  const pick = (target: unknown): string | null => {
+    if (typeof target === 'string') return target;
+    if (!target || typeof target !== 'object' || Array.isArray(target)) return null;
+    const conditions = target as Record<string, unknown>;
+    for (const c of ['import', 'node', 'default']) {
+      if (c in conditions) {
+        const hit = pick(conditions[c]);
+        if (hit) return hit;
+      }
+    }
+    return null;
+  };
+  const { exports } = pkg;
+  if (exports !== undefined && exports !== null) {
+    const isSubpathMap =
+      typeof exports === 'object' && !Array.isArray(exports) && Object.keys(exports).some((k) => k.startsWith('.'));
+    return pick(isSubpathMap ? (exports as Record<string, unknown>)['.'] : exports);
+  }
+  return typeof pkg.main === 'string' && pkg.main ? pkg.main : 'index.js';
+}
+
+/** Dynamically import an engine sibling from the project; null if it is not installed. */
+export async function loadSibling<T = Record<string, unknown>>(
+  spec: string,
+  projectRoot: string = process.cwd(),
+): Promise<T | null> {
+  const dir = findSiblingDir(spec, projectRoot);
+  if (!dir) return null;
   try {
-    return (await import(spec)) as T;
+    const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { exports?: unknown; main?: unknown };
+    const entry = resolveEsmEntry(pkg);
+    if (!entry) return null;
+    return (await import(pathToFileURL(join(dir, entry)).href)) as T;
   } catch {
     return null;
   }
@@ -32,27 +93,16 @@ export const loadMemory = () =>
 export const loadTelegram = () => loadSibling('@justfortytwo/telegram');
 
 /**
- * Installed version of a sibling (its package.json `version`), or null. Walks up
- * ancestor `node_modules` dirs exactly like Node's resolver — pure fs, so it is
- * immune to import-only `exports` maps (which defeat require.resolve) and to
- * bundled test runners where import.meta.resolve is unavailable. Matches where
- * loadSibling's dynamic import would find the package.
+ * Installed version of a sibling in the project (its package.json `version`), or
+ * null. Same lookup as loadSibling, so the two always agree.
  */
-export function readInstalledVersion(spec: string): string | null {
-  const segments = spec.split('/'); // e.g. ['@justfortytwo', 'gate']
-  let dir = dirname(fileURLToPath(import.meta.url));
-  const root = parse(dir).root;
-  while (true) {
-    const candidate = join(dir, 'node_modules', ...segments, 'package.json');
-    if (existsSync(candidate)) {
-      try {
-        return (JSON.parse(readFileSync(candidate, 'utf8')) as { version?: string }).version ?? null;
-      } catch {
-        return null;
-      }
-    }
-    if (dir === root) return null;
-    dir = dirname(dir);
+export function readInstalledVersion(spec: string, projectRoot: string = process.cwd()): string | null {
+  const dir = findSiblingDir(spec, projectRoot);
+  if (!dir) return null;
+  try {
+    return (JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { version?: string }).version ?? null;
+  } catch {
+    return null;
   }
 }
 
