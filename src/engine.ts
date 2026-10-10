@@ -207,6 +207,33 @@ export async function fetchOllamaModels(baseUrl: string): Promise<string[] | nul
   }
 }
 
+/**
+ * POST {baseUrl}/api/pull and wait for it to finish. Talks to the server over
+ * HTTP — not the local `ollama` CLI, which only reaches localhost — so a remote
+ * or sibling-container endpoint works. Streams progress (so a multi-minute pull
+ * never sits idle long enough to trip fetch's timeouts). Returns null on success,
+ * else a short error.
+ */
+export async function pullOllamaModel(baseUrl: string, model: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${baseUrl.replace(/\/$/, '')}/api/pull`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model, name: model, stream: true }), // `name`: older Ollama servers
+    });
+    if (!res.ok) return `HTTP ${res.status}`;
+    let last: { status?: string; error?: string } = {};
+    for (const line of (await res.text()).split('\n')) {
+      if (!line.trim()) continue;
+      try { last = JSON.parse(line) as typeof last; } catch { continue; }
+      if (last.error) return last.error;
+    }
+    return last.status === 'success' ? null : `pull ended with status "${last.status ?? 'unknown'}"`;
+  } catch (err) {
+    return (err as Error).message;
+  }
+}
+
 export type MigrationState = 'ok' | 'missing' | 'pending' | 'unavailable';
 
 /**

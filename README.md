@@ -24,7 +24,7 @@ trips npm's peer resolution. Pass
 `--no-install` to manage them yourself, and `--yes` (with `--answers <file.json>`
 or `FORTYTWO_*` env) for non-interactive installs. Point the memory engine at a
 remote embedder with `--ollama-base-url https://host` (threaded into `.mcp.json`,
-so the memory MCP server uses it), and pre-seed the optional Telegram channel
+so the memory MCP server uses it — see [The embedder](#the-embedder)), and pre-seed the optional Telegram channel
 with `--telegram-bot-token <token>` / `--allowed-chat-ids <ids>` (or the matching
 env vars) — secrets are written to the gitignored `.env`, never prompted.
 
@@ -79,7 +79,22 @@ is manual**: the prior version set is recorded before every update, so
 
 The engine uses a **local** embedder for privacy — personal data never leaves
 your machine. The standard model is `qwen3-embedding:0.6b`, served by Ollama;
-`init` pulls it and `doctor` verifies it.
+`init` makes sure it is available and `doctor` verifies it.
+
+`init` asks where Ollama runs:
+
+```
+Ollama base URL — where the embedder runs (Enter for http://localhost:11434):
+```
+
+Press Enter for a local install, or type another endpoint — e.g.
+`http://ollama:11434` when Ollama runs in a sibling container. The default shown
+is `$OLLAMA_BASE_URL` if it is set, else `http://localhost:11434`; an explicit
+`--ollama-base-url <url>` skips the question, and `--yes`/non-TTY runs use the
+default. The chosen URL is written to both `.env` and the memory server's
+`.mcp.json` entry, and `init` checks for the model on **that** server
+(`GET /api/tags`), pulling it there over HTTP (`POST /api/pull`) only if it is
+missing — the `ollama` CLI is not needed on the installer's machine.
 
 ## Requirements
 

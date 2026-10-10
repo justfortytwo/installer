@@ -5,7 +5,7 @@
 //   - .env                     written with secrets + runtime config (gitignored)
 //   - CLAUDE.md + context/*    rendered from @justfortytwo/persona templates
 //   - .mcp.json                wired to the memory MCP server
-//   - Ollama EMBED_MODEL pulled (warn-only); the memory DB migrated
+//   - Ollama EMBED_MODEL checked/pulled at the chosen OLLAMA_BASE_URL (warn-only); the memory DB migrated
 //   - .fortytwo/state.json     records the resolved sibling version set (rollback baseline)
 //   - next-step guidance: set ALLOWED_CHAT_IDS / attach the channel
 //
@@ -21,7 +21,7 @@ import { createInterface } from 'node:readline/promises';
 import type { Identity, Answers, VersionPin } from '../state.js';
 import { writeIdentity, recordVersionSet } from '../state.js';
 import { renderPersona, loadPersonaManifest } from '../render.js';
-import { loadMemory, readInstalledVersion, readSelfCompatRanges } from '../engine.js';
+import { loadMemory, readInstalledVersion, readSelfCompatRanges, fetchOllamaModels, pullOllamaModel } from '../engine.js';
 
 // The embedder model the engine standardizes on (privacy: local-only embeddings).
 export const EMBED_MODEL = 'qwen3-embedding:0.6b';
@@ -211,19 +211,50 @@ function recordInstalledSet(root: string): VersionPin[] {
   return pins;
 }
 
+/** Ollama HTTP calls ensureEmbedModel makes (injectable for tests). */
+export interface EmbedModelDeps {
+  listModels: (baseUrl: string) => Promise<string[] | null>;
+  pullModel: (baseUrl: string, model: string) => Promise<string | null>;
+  log: (line: string) => void;
+}
+
+const defaultEmbedModelDeps: EmbedModelDeps = {
+  listModels: fetchOllamaModels,
+  pullModel: pullOllamaModel,
+  log: (line) => { process.stdout.write(line + '\n'); },
+};
+
 /**
- * Provision local infra: pull the embedder model (warn-only, like wakeup.sh —
+ * Make sure `model` is available on the Ollama server at `baseUrl` — the SAME
+ * endpoint written to .env and .mcp.json. Checks /api/tags first and pulls (over
+ * HTTP, on that server) only when missing. Warn-only: returns a status note.
+ */
+export async function ensureEmbedModel(
+  baseUrl: string,
+  model: string,
+  deps: EmbedModelDeps = defaultEmbedModelDeps,
+): Promise<string> {
+  const models = await deps.listModels(baseUrl);
+  if (models === null) {
+    return `! Ollama unreachable at ${baseUrl} — could not check or pull ${model} (semantic recall will degrade until it is available)`;
+  }
+  if (models.includes(model)) return `✓ embedder ${model} available at ${baseUrl}`;
+  deps.log(`Pulling ${model} on ${baseUrl} (this can take a few minutes)…`);
+  const err = await deps.pullModel(baseUrl, model);
+  if (err) return `! could not pull ${model} via ${baseUrl}: ${err} (semantic recall will degrade until it is present)`;
+  return `✓ pulled ${model} on ${baseUrl}`;
+}
+
+/**
+ * Provision local infra: make the embedder model available (warn-only, like wakeup.sh —
  * the engine degrades to a fake embedder rather than hard-failing) and run the
  * memory DB migrations via the memory package (the engine owns the schema; the
  * CLI must not duplicate it).
  */
 async function provision(opts: { ollamaBaseUrl: string; embedModel: string; dbPath: string }): Promise<string[]> {
   const notes: string[] = [];
-  // 1. embedder model (best-effort)
-  const pulled = spawnSync('ollama', ['pull', opts.embedModel], { stdio: 'ignore' });
-  if (pulled.status !== 0) {
-    notes.push(`! could not pull ${opts.embedModel} via ollama (semantic recall will degrade until it is present)`);
-  }
+  // 1. embedder model (best-effort), on the configured endpoint
+  notes.push(await ensureEmbedModel(opts.ollamaBaseUrl, opts.embedModel));
   // 2. db migrations via the memory engine
   const mem = await loadMemory();
   if (mem && typeof mem.openDb === 'function' && typeof (mem as { runMigrations?: unknown }).runMigrations === 'function') {
@@ -248,7 +279,8 @@ interface InitFlags {
   answersFile?: string;
   flags: Record<string, string>;
   secrets: Record<string, string>;
-  ollamaBaseUrl: string;
+  /** Explicit `--ollama-base-url`, if given (env/prompt resolution is in resolveOllamaBaseUrl). */
+  ollamaBaseUrl?: string;
   dbPath: string;
 }
 
@@ -259,7 +291,7 @@ function parseInitArgs(argv: string[]): InitFlags {
   let yes = false;
   let noInstall = false;
   let answersFile: string | undefined;
-  let ollamaBaseUrl = process.env.OLLAMA_BASE_URL ?? DEFAULT_OLLAMA_BASE_URL;
+  let ollamaBaseUrl: string | undefined;
   let dbPath = process.env.DB_PATH ?? DEFAULT_DB_PATH;
   const SECRET_FLAGS: Record<string, string> = {
     'telegram-bot-token': 'TELEGRAM_BOT_TOKEN',
@@ -274,7 +306,7 @@ function parseInitArgs(argv: string[]): InitFlags {
     const name = a.slice(2);
     const val = argv[++i] ?? '';
     if (name === 'answers') answersFile = val;
-    else if (name === 'ollama-base-url') ollamaBaseUrl = val;
+    else if (name === 'ollama-base-url') ollamaBaseUrl = val.trim() || undefined;
     else if (name === 'db-path') dbPath = val;
     else if (SECRET_FLAGS[name]) secrets[SECRET_FLAGS[name]] = val;
     else flags[name.replace(/-/g, '_')] = val; // --agent-name -> agent_name
@@ -321,6 +353,42 @@ export async function collectChannelSecrets(
   return added;
 }
 
+const isHttpUrl = (v: string): boolean => {
+  try {
+    const u = new URL(v);
+    return (u.protocol === 'http:' || u.protocol === 'https:') && u.hostname !== '';
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Choose the Ollama endpoint for this init. Precedence:
+ *   1. an explicit `--ollama-base-url` — used as-is, never re-asked;
+ *   2. interactive: ask, with the inherited OLLAMA_BASE_URL env (else
+ *      http://localhost:11434) as the Enter-to-accept default; a typed URL is
+ *      used exactly as entered (an invalid one is re-asked, up to 3 tries);
+ *   3. non-interactive (`ask` absent): that same default.
+ * Pure: `ask` is injected, so it unit-tests without a TTY.
+ */
+export async function resolveOllamaBaseUrl(opts: {
+  flag?: string;
+  env?: string;
+  ask?: (prompt: string) => Promise<string>;
+}): Promise<string> {
+  if (opts.flag) return opts.flag;
+  const fallback = opts.env?.trim() || DEFAULT_OLLAMA_BASE_URL;
+  if (!opts.ask) return fallback;
+  let prompt = `Ollama base URL — where the embedder runs (Enter for ${fallback}): `;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const answer = (await opts.ask(prompt)).trim();
+    if (!answer) return fallback;
+    if (isHttpUrl(answer)) return answer;
+    prompt = `  "${answer}" is not an http(s) URL (e.g. http://ollama:11434). Ollama base URL (Enter for ${fallback}): `;
+  }
+  throw new Error('init: no valid Ollama base URL given (expected http(s)://host:port)');
+}
+
 export async function runInit(argv: string[]): Promise<number> {
   const root = process.cwd();
   const opts = parseInitArgs(argv);
@@ -363,22 +431,27 @@ export async function runInit(argv: string[]): Promise<number> {
   };
   writeIdentity(identity, root);
 
-  // Interactively offer the optional Telegram secrets not already provided, so
-  // the channel works without a second manual .env edit. Skippable; non-TTY/--yes
-  // runs are unaffected (secrets still come from flags/env there).
+  // Interactively ask for the Ollama endpoint (Enter keeps the default) and offer
+  // the optional Telegram secrets not already provided, so neither needs a second
+  // manual .env edit. Non-TTY/--yes runs are unaffected (flags/env/defaults).
+  let ollamaBaseUrl: string;
   if (interactive) {
     const rl = createInterface({ input: process.stdin, output: process.stdout });
     try {
-      Object.assign(opts.secrets, await collectChannelSecrets(opts.secrets, (q) => rl.question(q)));
+      const ask = (q: string) => rl.question(q);
+      ollamaBaseUrl = await resolveOllamaBaseUrl({ flag: opts.ollamaBaseUrl, env: process.env.OLLAMA_BASE_URL, ask });
+      Object.assign(opts.secrets, await collectChannelSecrets(opts.secrets, ask));
     } finally {
       rl.close();
     }
+  } else {
+    ollamaBaseUrl = await resolveOllamaBaseUrl({ flag: opts.ollamaBaseUrl, env: process.env.OLLAMA_BASE_URL });
   }
 
   // Seed runtime config alongside any provided secrets.
   writeEnv(
     {
-      OLLAMA_BASE_URL: opts.ollamaBaseUrl,
+      OLLAMA_BASE_URL: ollamaBaseUrl, // same value as .mcp.json + the provision check/pull
       EMBED_MODEL,
       DB_PATH: opts.dbPath,
       ...opts.secrets,
@@ -387,8 +460,8 @@ export async function runInit(argv: string[]): Promise<number> {
   );
 
   const render = renderPersona(identity, { root });
-  writeMcpJson(root, opts.dbPath, opts.ollamaBaseUrl);
-  const provisionNotes = await provision({ ollamaBaseUrl: opts.ollamaBaseUrl, embedModel: EMBED_MODEL, dbPath: opts.dbPath });
+  writeMcpJson(root, opts.dbPath, ollamaBaseUrl);
+  const provisionNotes = await provision({ ollamaBaseUrl, embedModel: EMBED_MODEL, dbPath: opts.dbPath });
   const pins = recordInstalledSet(root);
 
   // Report.

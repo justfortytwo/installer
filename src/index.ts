@@ -44,7 +44,7 @@ Usage:
 
 Verbs:
   init        Capture identity, write .env + .fortytwo/identity.json, render
-              persona, provision (ollama pull + db migrate), issue a pairing code.
+              persona, provision (embedder check/pull at OLLAMA_BASE_URL + db migrate).
   pair        Issue a one-time /login pairing code for a channel (e.g. Telegram).
   doctor      Health-check the engine: memory MCP contract, gate, db migrations,
               embedder model, and installed versions vs fortytwo.compat.

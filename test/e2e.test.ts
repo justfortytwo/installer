@@ -10,12 +10,13 @@
 // that the packages work together, not just in isolation.
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { runInit } from '../src/commands/init.js';
 import { runDoctorChecks, defaultDoctorDeps } from '../src/commands/doctor.js';
 import { linkEngineInto } from './helpers/engine.js';
+import { startFakeOllama } from './helpers/ollama.js';
 
 // Required manifest fields with no default — must be supplied or init refuses.
 const REQUIRED_ANSWERS: Record<string, string> = {
@@ -57,6 +58,24 @@ describe('e2e: init -> doctor -> store/recall', () => {
     expect(code).toBe(0);
     for (const f of ['CLAUDE.md', '.env', '.mcp.json', '.fortytwo/identity.json', '.fortytwo/state.json', 'context/OWNER.md', 'db/fortytwo.db']) {
       expect(existsSync(join(dir, f)), `expected ${f} to exist`).toBe(true);
+    }
+  });
+
+  it('writes the chosen Ollama URL to .env AND .mcp.json and checks the model there', async () => {
+    const ollama = await startFakeOllama({ models: ['qwen3-embedding:0.6b'] });
+    const prev = process.env.OLLAMA_BASE_URL;
+    process.env.OLLAMA_BASE_URL = ollama.url; // non-interactive: env is the value used
+    try {
+      expect(await runInit(['--yes'])).toBe(0);
+      const env = readFileSync(join(dir, '.env'), 'utf8');
+      const mcp = JSON.parse(readFileSync(join(dir, '.mcp.json'), 'utf8'));
+      expect(env).toContain(`OLLAMA_BASE_URL=${ollama.url}\n`);
+      expect(mcp.mcpServers['fortytwo-memory'].env.OLLAMA_BASE_URL).toBe(ollama.url);
+      // the availability check went to that server; model present -> no pull
+      expect(ollama.requests.map((r) => `${r.method} ${r.path}`)).toEqual(['GET /api/tags']);
+    } finally {
+      if (prev === undefined) delete process.env.OLLAMA_BASE_URL; else process.env.OLLAMA_BASE_URL = prev;
+      await ollama.close();
     }
   });
 

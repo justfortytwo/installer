@@ -4,10 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   resolveAnswers, mergeEnvContent, buildMcpConfig, buildVersionPins, engineInstallSpecs,
-  collectChannelSecrets,
-  type ManifestField,
+  collectChannelSecrets, resolveOllamaBaseUrl, ensureEmbedModel, EMBED_MODEL,
+  type ManifestField, type EmbedModelDeps,
 } from '../src/commands/init.js';
-import { readSelfCompatRanges } from '../src/engine.js';
+import { readSelfCompatRanges, fetchOllamaModels, pullOllamaModel } from '../src/engine.js';
+import { startFakeOllama } from './helpers/ollama.js';
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'ft-init-')); });
@@ -90,6 +91,99 @@ describe('buildMcpConfig', () => {
     const cfg = buildMcpConfig(null, { dbPath: 'db/fortytwo.db' });
     const mem = cfg.mcpServers['fortytwo-memory'] as { env: Record<string, string> };
     expect(mem.env.OLLAMA_BASE_URL).toBe('http://localhost:11434');
+  });
+});
+
+describe('resolveOllamaBaseUrl', () => {
+  const asker = (...answers: string[]) => {
+    const prompts: string[] = [];
+    const ask = async (q: string) => { prompts.push(q); return answers.shift() ?? ''; };
+    return { ask, prompts };
+  };
+
+  it('Enter (empty input) -> http://localhost:11434', async () => {
+    const { ask, prompts } = asker('');
+    expect(await resolveOllamaBaseUrl({ ask })).toBe('http://localhost:11434');
+    expect(prompts[0]).toMatch(/Ollama base URL.*Enter for http:\/\/localhost:11434/);
+  });
+  it('a custom URL is used exactly as entered', async () => {
+    const { ask } = asker('  http://ollama:11434  ');
+    expect(await resolveOllamaBaseUrl({ ask })).toBe('http://ollama:11434');
+  });
+  it('an inherited OLLAMA_BASE_URL env becomes the prompt default', async () => {
+    const { ask, prompts } = asker('');
+    expect(await resolveOllamaBaseUrl({ env: 'http://ollama:11434', ask })).toBe('http://ollama:11434');
+    expect(prompts[0]).toContain('Enter for http://ollama:11434');
+  });
+  it('the user can still override the env default', async () => {
+    const { ask } = asker('https://gpu-box.lan:11434');
+    expect(await resolveOllamaBaseUrl({ env: 'http://ollama:11434', ask })).toBe('https://gpu-box.lan:11434');
+  });
+  it('an explicit --ollama-base-url wins and is not re-asked', async () => {
+    const { ask, prompts } = asker('http://ignored:1');
+    expect(await resolveOllamaBaseUrl({ flag: 'http://flag:11434', env: 'http://env:11434', ask })).toBe('http://flag:11434');
+    expect(prompts).toEqual([]);
+  });
+  it('non-interactive (no ask): env, else localhost', async () => {
+    expect(await resolveOllamaBaseUrl({ env: 'http://ollama:11434' })).toBe('http://ollama:11434');
+    expect(await resolveOllamaBaseUrl({})).toBe('http://localhost:11434');
+  });
+  it('re-asks on a non-http(s) answer, then gives up after 3 tries', async () => {
+    const retry = asker('ollama:11434', 'http://ollama:11434');
+    expect(await resolveOllamaBaseUrl({ ask: retry.ask })).toBe('http://ollama:11434');
+    expect(retry.prompts[1]).toContain('not an http(s) URL');
+    await expect(resolveOllamaBaseUrl({ ask: asker('x', 'y', 'z').ask })).rejects.toThrow(/no valid Ollama base URL/);
+  });
+});
+
+describe('ensureEmbedModel (uses the selected endpoint)', () => {
+  const fakes = (models: string[] | null, pullErr: string | null = null) => {
+    const calls = { list: [] as string[], pull: [] as [string, string][] };
+    const deps: EmbedModelDeps = {
+      listModels: async (u) => { calls.list.push(u); return models; },
+      pullModel: async (u, m) => { calls.pull.push([u, m]); return pullErr; },
+      log: () => {},
+    };
+    return { deps, calls };
+  };
+
+  it('model already on the server: checks that URL, does not pull', async () => {
+    const { deps, calls } = fakes([EMBED_MODEL]);
+    expect(await ensureEmbedModel('http://ollama:11434', EMBED_MODEL, deps)).toBe(`✓ embedder ${EMBED_MODEL} available at http://ollama:11434`);
+    expect(calls).toEqual({ list: ['http://ollama:11434'], pull: [] });
+  });
+  it('model missing: pulls it on that same URL', async () => {
+    const { deps, calls } = fakes([]);
+    expect(await ensureEmbedModel('http://ollama:11434', EMBED_MODEL, deps)).toMatch(/^✓ pulled/);
+    expect(calls.pull).toEqual([['http://ollama:11434', EMBED_MODEL]]);
+  });
+  it('unreachable: warns naming the URL, never pulls', async () => {
+    const { deps, calls } = fakes(null);
+    expect(await ensureEmbedModel('http://ollama:11434', EMBED_MODEL, deps)).toMatch(/^! Ollama unreachable at http:\/\/ollama:11434/);
+    expect(calls.pull).toEqual([]);
+  });
+  it('pull failure is warn-only and reports the error', async () => {
+    const { deps } = fakes([], 'disk full');
+    expect(await ensureEmbedModel('http://ollama:11434', EMBED_MODEL, deps)).toMatch(/^! could not pull .* via http:\/\/ollama:11434: disk full/);
+  });
+});
+
+describe('Ollama HTTP calls hit the given base URL', () => {
+  it('lists, pulls (streamed NDJSON) and surfaces errors against that server', async () => {
+    const ok = await startFakeOllama({ models: [] });
+    const bad = await startFakeOllama({ pullError: 'manifest unknown' });
+    try {
+      expect(await ensureEmbedModel(`${ok.url}/`, EMBED_MODEL, { listModels: fetchOllamaModels, pullModel: pullOllamaModel, log: () => {} }))
+        .toBe(`✓ pulled ${EMBED_MODEL} on ${ok.url}/`);
+      expect(ok.requests.map((r) => `${r.method} ${r.path}`)).toEqual(['GET /api/tags', 'POST /api/pull']);
+      expect(JSON.parse(ok.requests[1]!.body)).toMatchObject({ model: EMBED_MODEL });
+      expect(await fetchOllamaModels(ok.url)).toEqual([EMBED_MODEL]);
+      expect(await pullOllamaModel(bad.url, EMBED_MODEL)).toBe('manifest unknown');
+      expect(await fetchOllamaModels('http://127.0.0.1:1')).toBeNull();
+    } finally {
+      await ok.close();
+      await bad.close();
+    }
   });
 });
 
