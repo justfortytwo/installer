@@ -5,10 +5,12 @@ import { join } from 'node:path';
 import {
   resolveAnswers, mergeEnvContent, buildMcpConfig, buildVersionPins, engineInstallSpecs,
   collectChannelSecrets, resolveOllamaBaseUrl, ensureEmbedModel, EMBED_MODEL,
+  askList, askMissingAnswers, listPromptLabel,
   type ManifestField, type EmbedModelDeps,
 } from '../src/commands/init.js';
 import { readSelfCompatRanges, fetchOllamaModels, pullOllamaModel } from '../src/engine.js';
 import { startFakeOllama } from './helpers/ollama.js';
+import { loadPersonaManifest, renderTemplate } from '../src/render.js';
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'ft-init-')); });
@@ -91,6 +93,83 @@ describe('buildMcpConfig', () => {
     const cfg = buildMcpConfig(null, { dbPath: 'db/fortytwo.db' });
     const mem = cfg.mcpServers['fortytwo-memory'] as { env: Record<string, string> };
     expect(mem.env.OLLAMA_BASE_URL).toBe('http://localhost:11434');
+  });
+});
+
+// Scripted readline: answers are consumed in order; records every prompt shown.
+const scripted = (...answers: string[]) => {
+  const prompts: string[] = [];
+  const ask = async (q: string) => {
+    prompts.push(q);
+    if (answers.length === 0) throw new Error(`unexpected extra prompt: ${q}`);
+    return answers.shift()!;
+  };
+  return { ask, prompts, remaining: answers };
+};
+
+describe('askList (one item per prompt, blank ends)', () => {
+  it('one item + blank terminator', async () => {
+    const s = scripted('Evidence over assumptions', '');
+    expect(await askList('Operating values', s.ask)).toEqual(['Evidence over assumptions']);
+    expect(s.prompts[0]).toBe('Operating values — enter one at a time.\nPress Enter on an empty line when done.\n> ');
+    expect(s.prompts[1]).toBe('> ');
+  });
+  it('multiple items + blank terminator, in order, commas kept inside an item', async () => {
+    const s = scripted('Min diff, less moving parts', '  Evidence over assumptions ', 'Prefer boring infrastructure', '');
+    expect(await askList('Operating values', s.ask)).toEqual([
+      'Min diff, less moving parts', 'Evidence over assumptions', 'Prefer boring infrastructure',
+    ]);
+  });
+  it('immediately blank = [] for an optional list', async () => {
+    expect(await askList('Interests', scripted('').ask)).toEqual([]);
+  });
+  it('a required list re-asks on an immediate blank instead of returning []', async () => {
+    const s = scripted('', 'rigor', '');
+    expect(await askList('Operating values', s.ask, { required: true })).toEqual(['rigor']);
+    expect(s.prompts[1]).toContain('at least one is required');
+  });
+});
+
+describe('askMissingAnswers', () => {
+  const f = (key: string, type: ManifestField['type'], prompt: string): ManifestField =>
+    ({ key, prompt, type, required: true, default: null });
+  const fields = [
+    f('owner_values', 'list', 'Your operating values and what you care about, one per line'),
+    f('owner_expertise', 'list', 'Domains where you have real depth, one per line'),
+    f('owner_voice_tone', 'string', 'Your tone in one short phrase'),
+  ];
+
+  it('does not consume the following question: each list stops at its own blank', async () => {
+    const s = scripted('rigor', 'candor', '', 'systems', '', 'dry, precise');
+    const answers: Record<string, unknown> = {};
+    await askMissingAnswers(fields, ['owner_values', 'owner_expertise', 'owner_voice_tone'], answers as never, s.ask);
+    expect(answers).toEqual({ owner_values: ['rigor', 'candor'], owner_expertise: ['systems'], owner_voice_tone: 'dry, precise' });
+    expect(s.remaining).toEqual([]);
+    expect(s.prompts.filter((p) => p.includes('enter one at a time'))).toHaveLength(2);
+    expect(s.prompts.at(-1)).toBe('Your tone in one short phrase\n> ');
+    expect(s.prompts.join('')).not.toMatch(/per line/i);
+  });
+
+  it('collected lists survive answer re-resolution and render in entry order', async () => {
+    const answers: Record<string, unknown> = {};
+    await askMissingAnswers(fields.slice(0, 1), ['owner_values'], answers as never, scripted('b, with comma', 'a', '').ask);
+    // runInit re-resolves the prompted answers before persisting/rendering
+    const { answers: resolved } = resolveAnswers(fields.slice(0, 1), { answersFile: answers, env: {}, flags: {} });
+    expect(resolved.owner_values).toEqual(['b, with comma', 'a']);
+    expect(renderTemplate('- {{owner_values}}', resolved)).toBe('- b, with comma\n- a');
+  });
+});
+
+describe('listPromptLabel', () => {
+  it('drops the "one per line" hint the single-line prompt cannot honor', () => {
+    expect(listPromptLabel('Domains where you have real depth, one per line')).toBe('Domains where you have real depth');
+    expect(listPromptLabel('The typical shape your pieces take, one step per line')).toBe('The typical shape your pieces take');
+    expect(listPromptLabel('Already clean')).toBe('Already clean');
+  });
+  it('leaves no "per line" wording on any list prompt of the real persona manifest', () => {
+    const lists = loadPersonaManifest().fields.filter((x) => x.type === 'list');
+    expect(lists.length).toBeGreaterThan(0);
+    for (const x of lists) expect(listPromptLabel(x.prompt), x.key).not.toMatch(/per line/i);
   });
 });
 

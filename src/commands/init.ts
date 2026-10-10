@@ -316,15 +316,60 @@ function parseInitArgs(argv: string[]): InitFlags {
   return { yes, noInstall, answersFile, flags, secrets, ollamaBaseUrl, dbPath };
 }
 
+/**
+ * A list field's manifest prompt without its "one per line" hint. readline is
+ * single-line (Enter — or Shift+Enter in many terminals — submits), so that hint
+ * promised input the UI can't take; askList gives the real instructions instead.
+ */
+export function listPromptLabel(prompt: string): string {
+  return prompt.replace(/,?\s*one (?:item |step )?per line\.?\s*$/i, '').trim();
+}
+
+/**
+ * Collect a list one item per prompt; a blank entry ends it. Each answer is ONE
+ * item, verbatim (trimmed) — commas inside it are kept. A required list re-asks
+ * on an immediate blank instead of returning []. Pure: `ask` is injected.
+ */
+export async function askList(
+  label: string,
+  ask: (prompt: string) => Promise<string>,
+  opts: { required?: boolean } = {},
+): Promise<string[]> {
+  const items: string[] = [];
+  let prompt = `${label} — enter one at a time.\nPress Enter on an empty line when done.\n> `;
+  while (true) {
+    const item = (await ask(prompt)).trim();
+    if (item) {
+      items.push(item);
+      prompt = '> ';
+    } else if (items.length === 0 && opts.required) {
+      prompt = '  (at least one is required)\n> ';
+    } else {
+      return items;
+    }
+  }
+}
+
+/** Ask for the required fields still missing, in order; lists item by item. Pure: `ask` is injected. */
+export async function askMissingAnswers(
+  fields: ManifestField[],
+  missing: string[],
+  answers: Answers,
+  ask: (prompt: string) => Promise<string>,
+): Promise<void> {
+  for (const key of missing) {
+    const field = fields.find((f) => f.key === key)!;
+    answers[key] = field.type === 'list'
+      ? await askList(listPromptLabel(field.prompt), ask, { required: field.required })
+      : (await ask(`${field.prompt}\n> `)).trim();
+  }
+}
+
 /** Prompt (readline) for the required fields still missing. TTY only. */
 async function promptMissing(fields: ManifestField[], missing: string[], answers: Answers): Promise<void> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
-    for (const key of missing) {
-      const field = fields.find((f) => f.key === key)!;
-      const ans = (await rl.question(`${field.prompt}\n> `)).trim();
-      answers[key] = field.type === 'list' ? coerceList(ans) : ans;
-    }
+    await askMissingAnswers(fields, missing, answers, (q) => rl.question(q));
   } finally {
     rl.close();
   }
