@@ -155,11 +155,14 @@ describe('declared engine compat', () => {
     expect(engineInstallSpecs(compat, () => false)).toContain('@justfortytwo/telegram@1.0.0-0');
     expect(Object.keys(compat)).not.toContain('@justfortytwo/runner');
   });
-  it('keeps package.json peerDependencies in sync with fortytwo.compat', () => {
-    const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
-      peerDependencies: Record<string, string>;
-    };
-    expect(pkg.peerDependencies).toEqual(readSelfCompatRanges());
+  it('keeps fortytwo.compat the only engine version list (no deps/peerDeps on @justfortytwo/*)', () => {
+    const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as Record<
+      string,
+      Record<string, string> | undefined
+    >;
+    for (const field of ['dependencies', 'peerDependencies', 'optionalDependencies']) {
+      expect(Object.keys(pkg[field] ?? {}).filter((n) => n.startsWith('@justfortytwo/'))).toEqual([]);
+    }
   });
 });
 

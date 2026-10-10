@@ -63,7 +63,7 @@ describe('runDoctorChecks', () => {
     expect(ok).toBe(true);
     const names = results.map((r) => r.name);
     expect(names).toEqual(
-      expect.arrayContaining(['safety gate', 'memory-mcp contract', 'peerDeps / fortytwo.compat', 'embedder model', 'db migrations']),
+      expect.arrayContaining(['safety gate', 'memory-mcp contract', 'fortytwo.compat', 'embedder model', 'db migrations']),
     );
   });
 
@@ -90,7 +90,7 @@ describe('runDoctorChecks', () => {
       installedVersion: (s) => (s === '@justfortytwo/memory' ? '0.3.0' : '0.1.0'), // outside ^0.1.0
     }));
     expect(ok).toBe(false);
-    expect(byName(results)['peerDeps / fortytwo.compat'].ok).toBe(false);
+    expect(byName(results)['fortytwo.compat'].ok).toBe(false);
   });
 
   it('WARNS (does not fail) when Ollama is unreachable — embedder is non-required', async () => {

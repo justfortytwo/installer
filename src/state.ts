@@ -63,7 +63,7 @@ export interface Identity {
 /** One resolved sibling-package version pin. */
 export interface VersionPin {
   name: string;     // e.g. "@justfortytwo/memory"
-  range: string;    // the declared semver range (from package.json peerDeps / fortytwo.compat)
+  range: string;    // the declared semver range (from package.json fortytwo.compat)
   resolved: string; // the concrete version installed (latest-in-range at install time)
 }
 

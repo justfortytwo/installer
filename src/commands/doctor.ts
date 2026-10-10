@@ -82,7 +82,7 @@ async function checkMemoryContract(deps: DoctorDeps): Promise<CheckResult> {
 }
 
 async function checkCompat(deps: DoctorDeps): Promise<CheckResult> {
-  const name = 'peerDeps / fortytwo.compat';
+  const name = 'fortytwo.compat';
   const drift: string[] = [];
   const seen: string[] = [];
   for (const [spec, range] of Object.entries(deps.compatRanges)) {

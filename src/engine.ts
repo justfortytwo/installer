@@ -1,7 +1,9 @@
 // engine.ts — access to the optional @justfortytwo/* engine siblings.
 //
-// The installer declares the engine packages as OPTIONAL peerDependencies and
-// reaches them via dynamic import, so a partial install (e.g. gate-only) never
+// The engine packages are NOT declared as dependencies or peerDependencies: their
+// versions live only in package.json `fortytwo.compat` (installed by init, checked
+// by doctor, moved by update). The CLI reaches them via dynamic import resolved
+// from the project's node_modules, so a partial install (e.g. gate-only) never
 // crashes the CLI — a missing sibling makes the dependent command/check report
 // "not installed" instead of throwing.
 

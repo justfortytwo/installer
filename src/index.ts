@@ -47,7 +47,7 @@ Verbs:
               persona, provision (ollama pull + db migrate), issue a pairing code.
   pair        Issue a one-time /login pairing code for a channel (e.g. Telegram).
   doctor      Health-check the engine: memory MCP contract, gate, db migrations,
-              embedder model, and declared peerDeps / fortytwo.compat.
+              embedder model, and installed versions vs fortytwo.compat.
   update      Resolve latest-in-range, install, run doctor, report. Points to
               rollback on failure.
   rollback    Restore the prior version set recorded in .fortytwo/state.json.

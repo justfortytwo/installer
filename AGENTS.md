@@ -43,7 +43,7 @@ Requires Node >= 20 (`engines`). Node 20 or 22 LTS is recommended because memory
 
 ## Testing notes
 
-- `test/e2e.test.ts` and the doctor/forget/pair paths import the **real** sibling packages, for example `@justfortytwo/memory` with its `FakeEmbedder` and a real sqlite DB. These siblings are *optional* peerDependencies, so `npm ci` does **not** install them. Locally, those tests need the siblings resolvable through `node_modules`, either installed or linked. In CI, the shared workflow takes `siblings: "gate memory persona telegram"`. `scheduler` is not in that list.
+- `test/e2e.test.ts` and the doctor/forget/pair paths import the **real** sibling packages, for example `@justfortytwo/memory` with its `FakeEmbedder` and a real sqlite DB. These siblings are not declared in `package.json` at all (only in `fortytwo.compat`), so `npm ci` does **not** install them. Locally, those tests need the siblings resolvable through `node_modules`, either installed or linked. In CI, the shared workflow takes `siblings: "gate memory persona telegram"`. `scheduler` is not in that list.
 - Tests use `mkdtempSync(tmpdir())` sandboxes, and e2e tests `process.chdir` into them. Restore cwd and env in `afterEach`.
 - Unit tests target the pure, exported helpers rather than the fs/spawn wrappers. Examples: `resolveAnswers`, `mergeEnvContent`, `buildMcpConfig`, `engineInstallSpecs`, `pickLatestInRange`, `performUpdate`/`performRollback` with injected deps, and `runDoctorChecks(deps)`. Keep new logic in that testable form.
 
@@ -58,8 +58,8 @@ Requires Node >= 20 (`engines`). Node 20 or 22 LTS is recommended because memory
 
 ## Architecture notes and gotchas
 
-- **Engine siblings are optional peers.** Reach them only through `loadSibling`/`loadGate`/`loadMemory`/`loadTelegram` in `engine.ts`, which use dynamic import and return `null` if the package is missing. Never add a static import of an `@justfortytwo/*` package, because a partial install must not crash the CLI.
-- **Two version lists must stay in sync.** `package.json` `peerDependencies` and `fortytwo.compat` hold the same ranges. `compat` is the source that `init` (auto-install), `doctor` (range cross-check) and `update` (latest-in-range) all read. A past fix (`fix(pkg): reconcile peerDependencies with fortytwo.compat`) exists because the two lists drifted apart.
+- **Engine siblings are undeclared at the npm level.** Reach them only through `loadSibling`/`loadGate`/`loadMemory`/`loadTelegram` in `engine.ts`, which use dynamic import and return `null` if the package is missing. Never add a static import of an `@justfortytwo/*` package, because a partial install must not crash the CLI.
+- **`fortytwo.compat` is the only version list.** `init` (auto-install), `doctor` (range cross-check) and `update` (latest-in-range) all read it. The siblings used to be duplicated as optional `peerDependencies`; that was removed because the two lists drifted (`fix(pkg): reconcile peerDependencies with fortytwo.compat`) and because npm validates optional peers against already-installed packages, so upgrading the installer past a sibling's range hard-failed with `ERESOLVE`. Do not re-add `@justfortytwo/*` to `dependencies`/`peerDependencies`; a test enforces this.
 - `readInstalledVersion` walks up the ancestor `node_modules` directories on purpose instead of using `require.resolve`, so that `exports` maps cannot break it. Keep that approach.
 - `satisfiesRange` is a deliberately minimal matcher. It handles exact versions and `^` ranges, including npm's 0.x rule. Do not add a semver dependency, and do not use range forms it cannot parse.
 - **Render idempotence:** MANAGED outputs are rewritten on every run. CAPTURED outputs are written once and belong to the user afterwards. Never clobber user edits. `render.ts` also guards against path traversal and prototype pollution, so keep those guards.
