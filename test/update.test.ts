@@ -30,6 +30,15 @@ describe('pickLatestInRange', () => {
   it('compares numerically, not lexically (0.1.10 > 0.1.9)', () => {
     expect(pickLatestInRange(['0.1.9', '0.1.10'], '^0.1.0')).toBe('0.1.10');
   });
+  it('an exact pre-release pin resolves to exactly that version (no newer pre-release / stable)', () => {
+    expect(pickLatestInRange(['0.1.5', '1.0.0-0', '1.0.0-1', '1.0.0'], '1.0.0-0')).toBe('1.0.0-0');
+  });
+  it('a caret range never resolves to a pre-release', () => {
+    expect(pickLatestInRange(['0.1.5', '0.1.6-0'], '^0.1.0')).toBe('0.1.5');
+  });
+  it('orders pre-releases below their release', () => {
+    expect(pickLatestInRange(['1.0.0', '1.0.0-1', '1.0.0-0'], '^1.0.0-0')).toBe('1.0.0');
+  });
 });
 
 describe('resolveLatestInRange', () => {

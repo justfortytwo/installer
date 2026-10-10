@@ -6,3 +6,9 @@ dist
 .claude/
 .codegraph/
 .wolf/
+.playwright-mcp/
+.wolf
+.codex/
+.opencode/
+GEMINI.md
+.cursor/

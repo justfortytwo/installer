@@ -7,7 +7,7 @@
 //   fortytwo          — the post-install lifecycle alias for everyday verbs.
 //
 // This is the operator's single surface over BOTH halves of the system:
-//   - the npm ENGINE (@justfortytwo/memory, /gate, /telegram, embedder), and
+//   - the npm ENGINE (@justfortytwo/memory, /gate, /telegram, /scheduler, embedder), and
 //   - the scaffolded PERSONA (CLAUDE.md + context/*, rendered from
 //     @justfortytwo/persona templates against .fortytwo/identity.json).
 //

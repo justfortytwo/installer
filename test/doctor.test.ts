@@ -26,6 +26,27 @@ const goodDeps = (over: Partial<DoctorDeps> = {}): DoctorDeps => ({
 const byName = (rs: { name: string; ok: boolean; required: boolean; detail: string }[]) =>
   Object.fromEntries(rs.map((r) => [r.name, r]));
 
+describe('satisfiesRange (pre-releases, npm semantics)', () => {
+  it('an exact pre-release pin matches only that pre-release', () => {
+    expect(satisfiesRange('1.0.0-0', '1.0.0-0')).toBe(true);
+    expect(satisfiesRange('1.0.0-1', '1.0.0-0')).toBe(false);
+    expect(satisfiesRange('1.0.0', '1.0.0-0')).toBe(false);
+    expect(satisfiesRange('0.1.5', '1.0.0-0')).toBe(false);
+  });
+  it('a plain caret range rejects pre-release versions', () => {
+    expect(satisfiesRange('0.1.6-0', '^0.1.0')).toBe(false);
+    expect(satisfiesRange('1.0.0-0', '^0.1.5')).toBe(false);
+  });
+  it('a pre-release caret admits pre-releases only on its own major.minor.patch', () => {
+    expect(satisfiesRange('1.0.0-1', '^1.0.0-0')).toBe(true);
+    expect(satisfiesRange('1.0.0', '^1.0.0-0')).toBe(true);
+    expect(satisfiesRange('1.1.0-0', '^1.0.0-0')).toBe(false);
+  });
+  it('rejects malformed versions', () => {
+    expect(satisfiesRange('not-a-version', '^0.1.0')).toBe(false);
+  });
+});
+
 describe('satisfiesRange (caret/exact)', () => {
   it('matches caret ranges including 0.x semantics', () => {
     expect(satisfiesRange('0.1.3', '^0.1.0')).toBe(true);

@@ -21,19 +21,15 @@ import {
   recordVersionSet, readState, readIdentity,
   type VersionPin, type InstallState,
 } from '../state.js';
-import { readInstalledVersion, readSelfCompatRanges, satisfiesRange } from '../engine.js';
+import { compareSemver, readInstalledVersion, readSelfCompatRanges, satisfiesRange } from '../engine.js';
 import { runDoctorChecks, defaultDoctorDeps, type CheckResult } from './doctor.js';
 import { renderPersona } from '../render.js';
 
 // --- pure: pick the latest published version satisfying a range ---
 
-/** Numeric semver compare (ignores any pre-release tag); -1 / 0 / 1. */
+/** Semver precedence (-1 / 0 / 1), pre-release aware (`1.0.0-0 < 1.0.0`). */
 export function compareVersions(a: string, b: string): number {
-  const parse = (v: string): number[] =>
-    v.replace(/^[v^~]/, '').split('-')[0]!.split('.').map((n) => parseInt(n, 10) || 0);
-  const [a0, a1, a2] = parse(a);
-  const [b0, b1, b2] = parse(b);
-  return (a0! - b0!) || (a1! - b1!) || (a2! - b2!);
+  return compareSemver(a, b);
 }
 
 /** Highest version in `versions` that satisfies `range`, or null if none do. */
