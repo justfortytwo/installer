@@ -17,7 +17,8 @@ npx create-fortytwo init              # capture your details, install the engine
 You only install **this** package — `init` installs the engine packages it needs
 on demand (`@justfortytwo/gate`, `/memory`, `/persona`, `/telegram`, `/scheduler`).
 During the 1.0 pre-release, `/telegram`, `/scheduler` and `/persona` are pinned
-exactly to `1.0.0-0`; telegram and scheduler pull in `@justfortytwo/runner` themselves, so the installer never
+to exact pre-release versions (see `fortytwo.compat` in `package.json`); telegram
+and scheduler pull in `@justfortytwo/runner` themselves, so the installer never
 installs runner directly. Engine versions live only in `package.json`
 `fortytwo.compat` (not in `peerDependencies`), so upgrading the installer never
 trips npm's peer resolution. Pass
