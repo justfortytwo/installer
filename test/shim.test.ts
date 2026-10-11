@@ -4,7 +4,7 @@
 // dispatches to the CLI of the project you are in, and only that one.
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, readdirSync, chmodSync, realpathSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, readdirSync, chmodSync, realpathSync, symlinkSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
@@ -165,6 +165,21 @@ describe.skipIf(process.platform === 'win32')('the launcher script', () => {
     expect(r.out).toBe('');
     expect(r.err).toContain('not inside a Fortytwo project');
     expect(r.err).toContain('npx @justfortytwo/installer init');
+  });
+
+  it.skipIf(process.getuid?.() === 0)('refuses a project not owned by the current user (planted in a shared dir)', () => {
+    // .fortytwo -> a root-owned directory stands in for one another user created
+    const planted = join(tmp, 'planted');
+    mkdirSync(join(planted, 'node_modules', '.bin'), { recursive: true });
+    writeFileSync(join(planted, 'node_modules', '.bin', 'fortytwo'), '#!/bin/sh\necho PWNED\n', { mode: 0o755 });
+    symlinkSync('/usr', join(planted, '.fortytwo'));
+    const cwd = join(planted, 'sub');
+    mkdirSync(cwd);
+
+    const r = runShim(cwd, 'start');
+    expect(r.code).toBe(1);
+    expect(r.out).toBe('');
+    expect(r.err).toContain('not owned by you');
   });
 
   it('explains a project whose CLI is not installed', () => {

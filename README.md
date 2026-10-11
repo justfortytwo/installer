@@ -35,7 +35,8 @@ working after `npx` exits:
 The launcher holds no version and no project path. It finds the Fortytwo project
 you are in (the nearest directory, from the current one upward, that contains
 `.fortytwo/`) and runs that project's own `node_modules/.bin/fortytwo` from the
-project root, so several projects can sit side by side on different versions.
+project root (only if you own that project's `.fortytwo/` and CLI, so code
+another user plants in a shared directory such as `/tmp` is never run), so several projects can sit side by side on different versions.
 Outside a project it exits with an error and runs nothing. It is one shared
 file, refreshed on every `init`, and it never replaces a `fortytwo` it did not
 write. If no directory on your `PATH` is writable, `init` says so and tells you to

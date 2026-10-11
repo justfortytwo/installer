@@ -21,15 +21,22 @@ import { delimiter, join, resolve } from 'node:path';
 export const SHIM_MARKER = 'fortytwo-shim';
 
 export const SHIM_SCRIPT = `#!/bin/sh
-# fortytwo — user-level launcher installed by @justfortytwo/installer (${SHIM_MARKER} v1).
+# fortytwo — user-level launcher installed by @justfortytwo/installer (${SHIM_MARKER} v2).
 # It holds no version and no project path. It finds the Fortytwo project you are
 # in (the nearest directory, from here upward, that contains .fortytwo/) and runs
-# that project's own CLI, node_modules/.bin/fortytwo, from the project root.
+# that project's own CLI, node_modules/.bin/fortytwo, from the project root —
+# only if both are owned by you.
 # Safe to delete: \`npx @justfortytwo/installer init\` puts it back.
 d=$(pwd -P) || exit 1
 while :; do
   if [ -d "$d/.fortytwo" ]; then
     if [ -x "$d/node_modules/.bin/fortytwo" ]; then
+      # Only run code you own: a .fortytwo/ or CLI planted by another user (e.g.
+      # in a shared /tmp above you) is refused, never executed.
+      if [ ! -O "$d/.fortytwo" ] || [ ! -O "$d/node_modules/.bin/fortytwo" ]; then
+        echo "fortytwo: refusing to run $d/node_modules/.bin/fortytwo: it or $d/.fortytwo is not owned by you." >&2
+        exit 1
+      fi
       cd "$d" && exec "$d/node_modules/.bin/fortytwo" "$@"
     fi
     echo "fortytwo: $d is a Fortytwo project, but its CLI is not installed there." >&2
