@@ -28,6 +28,7 @@ import { runUnbind } from './commands/unbind.js';
 import { runStart } from './commands/start.js';
 import { runStop } from './commands/stop.js';
 import { runStatus } from './commands/status.js';
+import { readSelfVersion } from './engine.js';
 
 export type Verb =
   | 'init'
@@ -65,15 +66,17 @@ Verbs:
   forget      Redact/remove specific memories from the memory MCP store.
   unbind      Revoke a channel binding (un-pair a chat / drop the allowlist entry).
 
-Run "fortytwo <verb> --help" for verb-specific options.
+Run "fortytwo <verb> --help" for verb-specific options; "fortytwo --version" prints
+the version of the CLI this project runs.
 `;
 
 /**
  * Decide the verb. `create-fortytwo` with no verb means `init`; `fortytwo` with
  * no verb prints usage. The invoked-as name comes from argv[1]'s basename.
  */
-export function resolveVerb(argv: string[], invokedAs: string): Verb | 'help' | null {
+export function resolveVerb(argv: string[], invokedAs: string): Verb | 'help' | 'version' | null {
   const first = argv[0];
+  if (first === '--version' || first === '-v' || first === 'version') return 'version';
   const verbs: Verb[] = ['init', 'start', 'stop', 'status', 'pair', 'doctor', 'update', 'rollback', 'enrich', 'forget', 'unbind'];
   if (first && (verbs as string[]).includes(first)) return first as Verb;
   if (!first || first === '--help' || first === '-h' || first === 'help') {
@@ -86,7 +89,7 @@ export function resolveVerb(argv: string[], invokedAs: string): Verb | 'help' | 
 export async function main(argv = process.argv.slice(2)): Promise<number> {
   const invokedAs = (process.argv[1] ?? '').split('/').pop() ?? 'fortytwo';
   const verb = resolveVerb(argv, invokedAs);
-  const rest = argv.slice(verb && verb !== 'help' && argv[0] === verb ? 1 : 0);
+  const rest = argv.slice(verb && verb !== 'help' && verb !== 'version' && argv[0] === verb ? 1 : 0);
 
   switch (verb) {
     case 'init':     return runInit(rest);
@@ -102,6 +105,9 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     case 'status':   return runStatus(rest);
     case 'help':
       process.stdout.write(USAGE);
+      return 0;
+    case 'version':
+      process.stdout.write(`${readSelfVersion() ?? 'unknown'}\n`);
       return 0;
     default:
       process.stderr.write(`Unknown command: ${argv[0]}\n\n${USAGE}`);

@@ -38,6 +38,8 @@ const setEnv: string[] = [];
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'ft-e2e-'));
   linkEngineInto(dir); // the engine lives in the project, as after a real `init` install
+  process.env.FORTYTWO_BIN_DIR = join(dir, 'user-bin'); // never touch the real user's PATH dirs
+  setEnv.push('FORTYTWO_BIN_DIR');
   cwd0 = process.cwd();
   process.chdir(dir);
   for (const [k, v] of Object.entries(REQUIRED_ANSWERS)) {
@@ -69,6 +71,13 @@ describe('e2e: init -> doctor -> store/recall', () => {
     expect(printed).toContain('  fortytwo start');
     expect(printed).toContain('  fortytwo pair');
     expect(printed).not.toMatch(/fortytwo-telegram-bridge|fortytwo-scheduler/);
+    // the project already has this exact CLI version, so nothing is re-installed …
+    expect(printed).not.toContain('Adding the fortytwo CLI');
+    // … and the user-level launcher is in place, generic (no project path inside)
+    const shim = readFileSync(join(dir, 'user-bin', 'fortytwo'), 'utf8');
+    expect(shim).toContain('fortytwo-shim');
+    expect(shim).not.toContain(dir);
+    expect(printed).toContain(`✓ fortytwo command: ${join(dir, 'user-bin', 'fortytwo')}`);
     for (const f of ['CLAUDE.md', '.env', '.mcp.json', '.fortytwo/identity.json', '.fortytwo/state.json', 'context/OWNER.md', 'db/fortytwo.db']) {
       expect(existsSync(join(dir, f)), `expected ${f} to exist`).toBe(true);
     }

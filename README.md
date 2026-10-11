@@ -9,16 +9,41 @@ assistant built on Claude Code. One package ships two bins:
 ## Quick start
 
 ```sh
-npm install @justfortytwo/installer   # in your project (or a fresh directory)
-npx create-fortytwo init              # capture your details, install the engine,
-                                      # and scaffold the persona
-npx fortytwo start                    # run fortytwo (foreground; Ctrl+C stops it)
-npx fortytwo pair                     # in a second terminal: connect Telegram
+npx @justfortytwo/installer init   # in a new, empty directory: capture your details,
+                                   # install the engine, scaffold the persona
+fortytwo start                     # run fortytwo (foreground; Ctrl+C stops it)
+fortytwo pair                      # in a second terminal: connect Telegram
 ```
 
-(Drop the `npx` if the `fortytwo` bin is on your `PATH`.) `pair` prints a code;
-send `/login <code>` to your bot from the chat you want to connect. Until then
-the bot ignores everyone, so it is safe to run `start` before any chat is paired.
+`pair` prints a code; send `/login <code>` to your bot from the chat you want to
+connect. Until then the bot ignores everyone, so it is safe to run `start`
+before any chat is paired.
+
+### The `fortytwo` command
+
+No global npm install is involved. `init` does two things so `fortytwo` keeps
+working after `npx` exits:
+
+1. **Pins the CLI into the project.** `@justfortytwo/installer` is added to the
+   project's `package.json` at the exact version you ran (`--save-exact`), so
+   `package-lock.json` records it and every project runs its own version.
+2. **Installs a small launcher** named `fortytwo` into a directory that is
+   already on your `PATH`: the first writable one of `~/.local/bin`, `~/bin`, or
+   npm's global bin directory (`npm prefix -g`/bin). Set `FORTYTWO_BIN_DIR` to
+   choose the directory yourself. Your shell config and `PATH` are never edited.
+
+The launcher holds no version and no project path. It finds the Fortytwo project
+you are in (the nearest directory, from the current one upward, that contains
+`.fortytwo/`) and runs that project's own `node_modules/.bin/fortytwo` from the
+project root, so several projects can sit side by side on different versions.
+Outside a project it exits with an error and runs nothing. It is one shared
+file, refreshed on every `init`, and it never replaces a `fortytwo` it did not
+write. If no directory on your `PATH` is writable, `init` says so and tells you to
+use `npx fortytwo …` from the project, which runs the same pinned CLI without
+downloading. `fortytwo --version` prints the version the current project runs.
+
+To remove it: delete the launcher (`init` prints its path) and, per project,
+`npm uninstall @justfortytwo/installer`.
 
 You only install **this** package — `init` installs the engine packages it needs
 on demand (`@justfortytwo/gate`, `/memory`, `/persona`, `/telegram`, `/scheduler`).
@@ -61,7 +86,7 @@ gitignored `.fortytwo/identity.json`; neither is ever committed.
 | `start`    | Run fortytwo in the foreground: load the project `.env` (the shell/container env wins over it), start every installed and configured service (the Telegram bridge needs `TELEGRAM_BOT_TOKEN`; the scheduler daemon needs nothing), prefix and forward their logs, and stop them all on Ctrl+C/SIGTERM. If a service exits, the others are stopped and `start` exits non-zero. It never daemonizes or restarts anything — see [Running as a service](#running-as-a-service). |
 | `status`   | Show whether fortytwo, the Telegram bridge and the scheduler are running, and whether memory is configured. Exits 0 when `fortytwo start` is running, 3 when not (usable as a health check). |
 | `stop`     | Stop the `fortytwo start` running for this project. It signals only the process recorded in `.fortytwo/runtime.json`, and only while that record's heartbeat is fresh; it never looks for processes by name. |
-| `init`     | Install any missing engine packages, then capture your assistant's name + owner details (interactive, or via flags/env for CI). Writes `.fortytwo/identity.json`, secrets + `ALLOWED_CHAT_IDS` to `.env`, wires `.mcp.json`, renders the persona, provisions local infra (pulls the embedder model, migrates the memory DB), and records the installed version set. |
+| `init`     | Install any missing engine packages, pin this CLI into the project and install the `fortytwo` launcher (see [The `fortytwo` command](#the-fortytwo-command)), then capture your assistant's name + owner details (interactive, or via flags/env for CI). Writes `.fortytwo/identity.json`, secrets + `ALLOWED_CHAT_IDS` to `.env`, wires `.mcp.json`, renders the persona, provisions local infra (pulls the embedder model, migrates the memory DB), and records the installed version set. |
 | `pair`     | Issue a one-time `/login` pairing code, persisted to the bridge's bindings db so the running bridge can redeem it (the dynamic counterpart to the static `ALLOWED_CHAT_IDS` allowlist). Refuses, and tells you to run `fortytwo start`, when Telegram isn't running; `--force` issues a code anyway (for a bridge you run yourself). |
 | `doctor`   | Health-check the engine: assert the gate's `POLICY_SCHEMA_VERSION` and memory's `MEMORY_TOOL_CONTRACT_VERSION` match what this CLI expects, confirm the memory DB is migrated, cross-check installed sibling versions against the declared compatibility ranges, and check the embedder model is pulled (warn-only). |
 | `update`   | Resolve the latest in-range version of each **installed** engine package, install it, rotate the rollback baseline, then run `doctor` to verify. `--dry-run` reports the resolved set without installing. |
@@ -86,7 +111,7 @@ owns restarts and logs. Use it directly as the service command:
 # docker-compose.yml (excerpt)
 services:
   fortytwo:
-    command: ["fortytwo", "start"]
+    command: ["npx", "fortytwo", "start"]   # the project's pinned CLI; no download
     working_dir: /workspace        # the project init was run in
     init: true                     # reap processes the bridge's Claude sessions leave
     restart: unless-stopped
@@ -99,6 +124,9 @@ WorkingDirectory=/path/to/project
 ExecStart=/usr/bin/env npx fortytwo start
 Restart=on-failure
 ```
+
+`npx fortytwo` passes SIGTERM through. Use `["fortytwo", "start"]` only if the
+image itself ran `init` (so the launcher is on the container's `PATH`).
 
 On SIGTERM it stops its services (SIGKILL after 10 s) and exits 0; if a service
 dies on its own, it stops the rest and exits non-zero, so `restart` policies
@@ -124,6 +152,12 @@ npx fortytwo-scheduler                            # scheduler daemon only
 `--force` to issue a code for it.
 
 ## Update safety
+
+**The CLI and the engine move separately.** `fortytwo update` moves the engine
+packages within the ranges of the project's pinned CLI, and never moves the CLI
+itself. To upgrade the CLI, and with it the compatibility ranges, re-run
+`npx @justfortytwo/installer@<version> init` in the project. Your answers and
+hand edits are kept.
 
 Distribution follows a **semver-ranges, latest-compatible** policy — there is no
 curated bill-of-materials. `update` installs the latest in-range version of each

@@ -124,6 +124,12 @@ function findSelfPackageJson(): Record<string, unknown> | null {
   }
 }
 
+/** This CLI's own version (package.json `version`), or null. */
+export function readSelfVersion(): string | null {
+  const v = findSelfPackageJson()?.version;
+  return typeof v === 'string' ? v : null;
+}
+
 /** The CLI's declared compat ranges (package.json `fortytwo.compat`). */
 export function readSelfCompatRanges(): Record<string, string> {
   const pkg = findSelfPackageJson();

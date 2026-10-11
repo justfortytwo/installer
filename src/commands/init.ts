@@ -21,7 +21,9 @@ import { createInterface } from 'node:readline/promises';
 import type { Identity, Answers, VersionPin } from '../state.js';
 import { writeIdentity, recordVersionSet } from '../state.js';
 import { renderPersona, loadPersonaManifest } from '../render.js';
-import { loadMemory, readInstalledVersion, readSelfCompatRanges, fetchOllamaModels, pullOllamaModel } from '../engine.js';
+import { loadMemory, readInstalledVersion, readSelfCompatRanges, readSelfVersion, fetchOllamaModels, pullOllamaModel } from '../engine.js';
+import { homedir } from 'node:os';
+import { installShim, npmGlobalBin, type ShimResult } from '../shim.js';
 
 // The embedder model the engine standardizes on (privacy: local-only embeddings).
 export const EMBED_MODEL = 'qwen3-embedding:0.6b';
@@ -177,32 +179,66 @@ export function engineInstallSpecs(
 }
 
 /**
- * Make sure the engine packages the persona + commands need are installed in the
- * project. Fresh users get the `create-fortytwo`/`fortytwo` bins from
- * @justfortytwo/installer, but its engine siblings are OPTIONAL peers npm does
- * not auto-install — so init installs whichever are missing. Presence is checked
- * with the SAME resolver the renderer/doctor use (Node's upward node_modules
- * walk), so an already-linked dev tree or a prior install is a no-op.
- * `--no-install` opts out (managed/offline installs).
+ * Make sure the project has what it runs on: the engine packages from
+ * fortytwo.compat (only the missing ones) and this CLI itself, pinned exactly,
+ * so `fortytwo` keeps working after `npx` exits. Presence is checked with the
+ * SAME project-rooted resolver the renderer/doctor use, so an already-linked dev
+ * tree or a prior install is a no-op. `--no-install` opts out (managed/offline
+ * installs).
  */
 async function ensureEngine(root: string, opts: { noInstall?: boolean }): Promise<void> {
   const specs = engineInstallSpecs(readSelfCompatRanges(), (s) => readInstalledVersion(s) !== null);
-  if (specs.length === 0) return;
+  const cliSpec = cliInstallSpec(
+    readSelfVersion(),
+    readInstalledVersion(CLI_PACKAGE),
+    process.env.FORTYTWO_INSTALLER_SPEC,
+  );
+  if (specs.length === 0 && !cliSpec) return;
   if (opts.noInstall) {
+    if (specs.length === 0) return; // the project CLI is optional under --no-install
     throw new Error(
       `init: engine packages are not installed: ${specs.join(', ')}\n` +
       `Install them (npm install ${specs.join(' ')}) or omit --no-install.`,
     );
   }
-  process.stdout.write(`Installing engine packages: ${specs.join(', ')}\n`);
   if (!existsSync(join(root, 'package.json'))) {
     spawnSync('npm', ['init', '-y'], { cwd: root, stdio: 'ignore' });
   }
-  const res = spawnSync('npm', ['install', '--no-audit', '--no-fund', ...specs], { cwd: root, stdio: 'inherit' });
+  if (specs.length > 0) {
+    process.stdout.write(`Installing engine packages: ${specs.join(', ')}\n`);
+    npmInstallOrThrow(root, specs, [], 'engine packages');
+  }
+  if (cliSpec) {
+    // Exact pin: the project's CLI moves only when you re-run init with a newer
+    // installer, never as a side effect of `npm install` or `fortytwo update`.
+    process.stdout.write(`Adding the fortytwo CLI to this project: ${cliSpec}\n`);
+    npmInstallOrThrow(root, [cliSpec], ['--save-exact'], 'the fortytwo CLI');
+  }
+}
+
+function npmInstallOrThrow(root: string, specs: string[], flags: string[], what: string): void {
+  const res = spawnSync('npm', ['install', '--no-audit', '--no-fund', ...flags, ...specs], { cwd: root, stdio: 'inherit' });
   if (res.status !== 0) {
     const why = res.error ? res.error.message : `npm exited ${res.status}`;
-    throw new Error(`init: failed to install engine packages (${why}). Install manually: npm install ${specs.join(' ')}`);
+    throw new Error(`init: failed to install ${what} (${why}). Install manually: npm install ${flags.join(' ')} ${specs.join(' ')}`.replace(/  +/g, ' '));
   }
+}
+
+export const CLI_PACKAGE = '@justfortytwo/installer';
+
+/**
+ * The install spec that pins this CLI into the project (so node_modules/.bin/
+ * fortytwo exists and package-lock.json records it), or null when the project
+ * already has exactly this version. `override` (FORTYTWO_INSTALLER_SPEC) lets a
+ * dev/CI run install a local tarball instead of the registry copy.
+ */
+export function cliInstallSpec(
+  selfVersion: string | null,
+  installedVersion: string | null,
+  override?: string,
+): string | null {
+  if (!selfVersion || installedVersion === selfVersion) return null;
+  return override || `${CLI_PACKAGE}@${selfVersion}`;
 }
 
 function recordInstalledSet(root: string): VersionPin[] {
@@ -473,8 +509,9 @@ export async function resolveOllamaBaseUrl(opts: {
  * Telegram is optional: its bridge only starts with TELEGRAM_BOT_TOKEN, so say
  * so here rather than let `start` skip it silently.
  */
-export function nextSteps(o: { hasBotToken: boolean; allowedChatIds?: string }): string[] {
-  const lines = ['', 'Fortytwo is ready.', '', 'Start it with:', '  fortytwo start', ''];
+export function nextSteps(o: { hasBotToken: boolean; allowedChatIds?: string; cmd?: string }): string[] {
+  const cmd = o.cmd ?? 'fortytwo';
+  const lines = ['', 'Fortytwo is ready.', '', 'Start it with:', `  ${cmd} start`, ''];
   if (!o.hasBotToken) {
     lines.push('To use Telegram, first set TELEGRAM_BOT_TOKEN in .env (create a bot with @BotFather).');
   }
@@ -483,8 +520,34 @@ export function nextSteps(o: { hasBotToken: boolean; allowedChatIds?: string }):
   } else {
     lines.push('Then connect Telegram with:');
   }
-  lines.push('  fortytwo pair');
+  lines.push(`  ${cmd} pair`);
   return lines;
+}
+
+/**
+ * The init report line for the user-level launcher, and the command to tell the
+ * user to type: `fortytwo` when our launcher is on PATH, else `npx fortytwo`
+ * (which runs the project-local CLI with no download).
+ */
+export function shimReport(r: ShimResult): { line: string; cmd: string } {
+  switch (r.status) {
+    case 'installed':
+    case 'updated':
+    case 'unchanged':
+      return { line: `✓ fortytwo command: ${r.path} (runs the CLI of the project you are in)`, cmd: 'fortytwo' };
+    case 'foreign':
+      return {
+        line: `! left ${r.path} alone (not installed by Fortytwo); this project's CLI runs with \`npx fortytwo\``,
+        cmd: 'npx fortytwo',
+      };
+    case 'no-dir':
+      return {
+        line: '! no writable directory on your PATH for the fortytwo command; run it from this project with `npx fortytwo` (or set FORTYTWO_BIN_DIR and re-run init)',
+        cmd: 'npx fortytwo',
+      };
+    case 'unsupported':
+      return { line: `! no fortytwo launcher on ${r.platform}; run it from this project with \`npx fortytwo\``, cmd: 'npx fortytwo' };
+  }
 }
 
 export async function runInit(argv: string[]): Promise<number> {
@@ -567,6 +630,13 @@ export async function runInit(argv: string[]): Promise<number> {
   writeMcpJson(root, opts.dbPath, ollamaBaseUrl);
   const provisionNotes = await provision({ ollamaBaseUrl, embedModel: EMBED_MODEL, dbPath: opts.dbPath });
   const pins = recordInstalledSet(root);
+  const shim = shimReport(installShim({
+    home: homedir(),
+    pathEnv: process.env.PATH ?? '',
+    platform: process.platform,
+    override: process.env.FORTYTWO_BIN_DIR || undefined,
+    npmGlobalBin,
+  }));
 
   // Report.
   const out = process.stdout;
@@ -575,7 +645,9 @@ export async function runInit(argv: string[]): Promise<number> {
   out.write(`✓ rendered persona: ${render.written.length} written, ${render.skipped.length} preserved\n`);
   for (const n of provisionNotes) out.write(`  ${n}\n`);
   out.write(`✓ recorded ${pins.length} installed engine package(s)\n`);
+  out.write(`${shim.line}\n`);
   out.write(nextSteps({
+    cmd: shim.cmd,
     hasBotToken: !!opts.secrets.TELEGRAM_BOT_TOKEN,
     allowedChatIds: opts.secrets.ALLOWED_CHAT_IDS,
   }).join('\n') + '\n');
