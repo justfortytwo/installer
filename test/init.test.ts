@@ -381,14 +381,17 @@ describe('declared engine compat', () => {
     // engineInstallSpecs over the real compat (nothing present) must offer scheduler.
     expect(engineInstallSpecs(compat, () => false)).toContain(`@justfortytwo/scheduler@${compat['@justfortytwo/scheduler']}`);
   });
-  it('pins telegram to the exact 1.0.0-1 pre-release; runner stays transitive', () => {
+  it('pins telegram to the exact 1.0.0-2 pre-release; runner stays transitive', () => {
     const compat = readSelfCompatRanges();
-    expect(compat['@justfortytwo/telegram']).toBe('1.0.0-1');
-    expect(engineInstallSpecs(compat, () => false)).toContain('@justfortytwo/telegram@1.0.0-1');
+    expect(compat['@justfortytwo/telegram']).toBe('1.0.0-2');
+    expect(engineInstallSpecs(compat, () => false)).toContain('@justfortytwo/telegram@1.0.0-2');
     expect(Object.keys(compat)).not.toContain('@justfortytwo/runner');
   });
-  it('pins scheduler 1.0.0-1: 1.0.0-0 declares a telegram peer that rejects telegram 1.0.0-1 (ERESOLVE)', () => {
-    expect(readSelfCompatRanges()['@justfortytwo/scheduler']).toBe('1.0.0-1');
+  it('pins scheduler 1.0.0-2: 1.0.0-1 depends on memory ^0.1.5 and would nest a second memory beside 1.0.0-0', () => {
+    expect(readSelfCompatRanges()['@justfortytwo/scheduler']).toBe('1.0.0-2');
+  });
+  it('pins memory to the exact 1.0.0-0 pre-release (a caret on 0.1.x would never select it)', () => {
+    expect(readSelfCompatRanges()['@justfortytwo/memory']).toBe('1.0.0-0');
   });
   it('pins persona to the exact 1.0.0-0 pre-release (a caret would never select it)', () => {
     expect(readSelfCompatRanges()['@justfortytwo/persona']).toBe('1.0.0-0');
