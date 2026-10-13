@@ -101,7 +101,7 @@ function fakeUpdateDeps(over: {
       ok: over.doctorOk ?? true,
     }),
     record: (pins) => { rec.recorded.push(pins); },
-    render: () => { rec.rendered++; },
+    reconcile: async () => { rec.rendered++; },
     out: (s) => { rec.out += s; },
     err: (s) => { rec.err += s; },
   };
@@ -145,7 +145,7 @@ describe('performUpdate', () => {
     expect(rec.out).toMatch(/0\.1\.2 → 0\.1\.3/);
   });
 
-  it('happy path: installs target, rotates the ledger, doctor passes → 0 + re-render', async () => {
+  it('happy path: installs target, rotates the ledger, doctor passes → 0 + runtime reconciliation', async () => {
     const { deps, rec } = fakeUpdateDeps({
       compatRanges: COMPAT,
       installed: { '@justfortytwo/memory': '0.1.2' },
@@ -167,7 +167,7 @@ describe('performUpdate', () => {
     });
     expect(await performUpdate(deps, {})).toBe(1);
     expect(rec.recorded.length).toBe(1); // ledger rotated so rollback has the pre-update set
-    expect(rec.rendered).toBe(0); // never re-render an unhealthy engine
+    expect(rec.rendered).toBe(0); // never reconcile an unhealthy engine
     expect(rec.err).toMatch(/rollback/);
   });
 
@@ -223,5 +223,67 @@ describe('performRollback', () => {
     expect(await performRollback(deps)).toBe(0);
     expect(rec.installed).toEqual([['@justfortytwo/memory@0.1.2']]);
     expect(rec.recorded).toEqual([prev]);
+  });
+});
+
+
+describe('update lifecycle guard', () => {
+  it.each(['0.1.2', '0.1.3'])('refuses running services before installing or reconciling version %s', async version => {
+    const { deps, rec } = fakeUpdateDeps({ compatRanges: COMPAT, installed: { '@justfortytwo/memory': version }, published: { '@justfortytwo/memory': ['0.1.3'] } });
+    deps.runtimeActive = () => true;
+    expect(await performUpdate(deps, {})).toBe(1);
+    expect(rec.installed).toEqual([]); expect(rec.rendered).toBe(0);
+    expect(rec.err).toContain('fortytwo stop');
+    expect(await performUpdate(deps, {dryRun:true})).toBe(0);
+    expect(rec.rendered).toBe(0);
+  });
+});
+
+
+describe('externally invoked installer bootstrap', () => {
+  function bootstrap() {
+    const installed = { '@justfortytwo/installer': '1.0.0-9', '@justfortytwo/persona': '1.0.0-0' };
+    const { deps, rec } = fakeUpdateDeps({ installed, compatRanges: { '@justfortytwo/persona': '1.0.0-1' }, published: { '@justfortytwo/persona': ['1.0.0-0', '1.0.0-1'] } });
+    const events: string[] = [];
+    deps.runningInstallerVersion = () => '1.0.0-10';
+    deps.persistInstaller = spec => { events.push(spec); installed['@justfortytwo/installer'] = '1.0.0-10'; return {ok:true,detail:''}; };
+    const fetch = deps.fetchVersions;
+    deps.fetchVersions = pkg => { events.push('resolve'); return fetch(pkg); };
+    const install = deps.install;
+    deps.install = specs => { installed['@justfortytwo/persona'] = '1.0.0-1'; return install(specs); };
+    return {deps,rec,events,installed};
+  }
+  it('persists the running exact version before resolving its matrix and is repeatable', async () => {
+    const {deps,rec,events,installed} = bootstrap();
+    expect(await performUpdate(deps, {})).toBe(0);
+    expect(events).toEqual(['@justfortytwo/installer@1.0.0-10','resolve']);
+    expect(installed['@justfortytwo/installer']).toBe('1.0.0-10');
+    expect(rec.installed).toEqual([['@justfortytwo/persona@1.0.0-1']]);
+    expect(await performUpdate(deps, {})).toBe(0);
+    expect(events.filter(e => e.startsWith('@'))).toHaveLength(1);
+    expect(rec.installed).toHaveLength(1);
+    expect(rec.rendered).toBe(2);
+  });
+  it('dry-run leaves installer and engine state untouched', async () => {
+    const {deps,rec,events,installed} = bootstrap();
+    expect(await performUpdate(deps, {dryRun:true})).toBe(0);
+    expect(events).toEqual(['resolve']);
+    expect(installed['@justfortytwo/installer']).toBe('1.0.0-9');
+    expect(rec.installed).toEqual([]); expect(rec.rendered).toBe(0);
+  });
+  it('refuses a live runtime before persistence or registry access', async () => {
+    const {deps,events} = bootstrap(); deps.runtimeActive = () => true;
+    expect(await performUpdate(deps, {})).toBe(1); expect(events).toEqual([]);
+  });
+  it('stops when exact installer installation fails', async () => {
+    const {deps,events,rec} = bootstrap();
+    deps.persistInstaller = () => ({ok:false,detail:'disk full'});
+    expect(await performUpdate(deps, {})).toBe(1);
+    expect(events).toEqual([]); expect(rec.rendered).toBe(0);
+    expect(rec.err).toContain('disk full');
+  });
+  it('never downgrades a newer project installer', async () => {
+    const {deps,events} = bootstrap(); deps.runningInstallerVersion = () => '1.0.0-8';
+    expect(await performUpdate(deps, {})).toBe(1); expect(events).toEqual([]);
   });
 });

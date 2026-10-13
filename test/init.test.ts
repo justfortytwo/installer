@@ -387,14 +387,14 @@ describe('declared engine compat', () => {
     expect(engineInstallSpecs(compat, () => false)).toContain('@justfortytwo/telegram@1.0.0-2');
     expect(Object.keys(compat)).not.toContain('@justfortytwo/runner');
   });
-  it('pins scheduler 1.0.0-2: 1.0.0-1 depends on memory ^0.1.5 and would nest a second memory beside 1.0.0-0', () => {
-    expect(readSelfCompatRanges()['@justfortytwo/scheduler']).toBe('1.0.0-2');
+  it('pins scheduler with the internal Oneiros handler', () => {
+    expect(readSelfCompatRanges()['@justfortytwo/scheduler']).toBe('1.0.0-3');
   });
-  it('pins memory to the exact 1.0.0-0 pre-release (a caret on 0.1.x would never select it)', () => {
-    expect(readSelfCompatRanges()['@justfortytwo/memory']).toBe('1.0.0-0');
+  it('pins memory to the exact Oneiros cursor pre-release (a caret on 0.1.x would never select it)', () => {
+    expect(readSelfCompatRanges()['@justfortytwo/memory']).toBe('1.0.0-1');
   });
-  it('pins persona to the exact 1.0.0-0 pre-release (a caret would never select it)', () => {
-    expect(readSelfCompatRanges()['@justfortytwo/persona']).toBe('1.0.0-0');
+  it('pins persona to the exact Oneiros pre-release (a caret would never select it)', () => {
+    expect(readSelfCompatRanges()['@justfortytwo/persona']).toBe('1.0.0-1');
   });
   it('keeps fortytwo.compat the only engine version list (no deps/peerDeps on @justfortytwo/*)', () => {
     const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as Record<

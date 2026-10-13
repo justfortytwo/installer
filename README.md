@@ -154,11 +154,33 @@ npx fortytwo-scheduler                            # scheduler daemon only
 
 ## Update safety
 
-**The CLI and the engine move separately.** `fortytwo update` moves the engine
-packages within the ranges of the project's pinned CLI, and never moves the CLI
-itself. To upgrade the CLI, and with it the compatibility ranges, re-run
-`npx @justfortytwo/installer@<version> init` in the project. Your answers and
-hand edits are kept.
+From the project root, bootstrap installations pinned to installer `1.0.0-9`
+into this coordinated release (after publication):
+
+```sh
+fortytwo stop
+npx @justfortytwo/installer@1.0.0-10 update
+fortytwo start
+```
+
+The old CLI cannot discover a new installer's exact compatibility matrix, so this
+one-time explicit version is necessary. No re-exec, manual npm install or init is needed. The invoked installer refuses a live runtime, persists its own newer
+version with `npm install --save-exact`, and continues in the same process using
+its own compatibility matrix. This updates package.json, package-lock.json and
+the project-local CLI used by the existing launcher. Verify with
+`fortytwo --version`. Repeated updates skip installer installation when equal;
+invoking an older installer is refused. `--dry-run` writes no project state.
+
+Later project-local `fortytwo update` uses the new matrix. Discovery of future
+installer releases/channels is a separate policy; this command does not query
+for newer installer versions. Engine rollback does not roll back the installer.
+If a later engine step fails, fix the reported error and retry update while
+services remain stopped; the persisted installer stays available.
+
+Update never calls init or blanket-renders persona context. `UpdateDeps.reconcile`
+is the seam for explicit, idempotent machine-owned asset/state migrations,
+including Oneiros checkpoint initialization and job seeding. Curated context
+remains untouched.
 
 Distribution follows a **semver-ranges, latest-compatible** policy — there is no
 curated bill-of-materials. `update` installs the latest in-range version of each
@@ -204,3 +226,22 @@ MIT © 2026 Enrico Deleo
 ---
 
 Created and maintained by [**Enrico Deleo**](https://enricodeleo.com).
+
+## Oneiros installation and upgrades
+
+Init automatically initializes Oneiros at the current memory head and seeds one
+`persona.oneiros` scheduler job, with no extra questions. An empty DB starts at
+zero; an existing DB starts at its current insertion high watermark.
+
+Update never re-renders persona/context files. After package installation and
+health checks it initializes only missing Oneiros state and reconciles the job.
+Unchanged-version updates also reconcile incomplete wiring, while dry-run does
+not mutate anything. Existing checkpoints and curated context are preserved;
+historical memory is never replayed implicitly.
+
+Existing installations first need the updated installer (`1.0.0-10`); the CLI
+is project-pinned and `fortytwo update` does not update that CLI. Once these
+coordinated versions are released, use the new CLI, stop services with
+`fortytwo stop` (or the service manager), run `fortytwo update`, then restart via
+`fortytwo start`. Update refuses live services before changing anything so an
+old scheduler cannot claim jobs it does not understand. No second init is needed.

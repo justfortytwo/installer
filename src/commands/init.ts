@@ -23,6 +23,7 @@ import { writeIdentity, recordVersionSet } from '../state.js';
 import { renderPersona, loadPersonaManifest } from '../render.js';
 import { loadMemory, readInstalledVersion, readSelfCompatRanges, readSelfVersion, fetchOllamaModels, pullOllamaModel } from '../engine.js';
 import { homedir } from 'node:os';
+import { reconcileOneiros } from '../oneiros.js';
 import { installShim, npmGlobalBin, type ShimResult } from '../shim.js';
 
 // The embedder model the engine standardizes on (privacy: local-only embeddings).
@@ -629,6 +630,7 @@ export async function runInit(argv: string[]): Promise<number> {
   const render = renderPersona(identity, { root });
   writeMcpJson(root, opts.dbPath, ollamaBaseUrl);
   const provisionNotes = await provision({ ollamaBaseUrl, embedModel: EMBED_MODEL, dbPath: opts.dbPath });
+  await reconcileOneiros(root, opts.dbPath);
   const pins = recordInstalledSet(root);
   const shim = shimReport(installShim({
     home: homedir(),

@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { runInit } from '../src/commands/init.js';
 import { runDoctorChecks, defaultDoctorDeps } from '../src/commands/doctor.js';
+import { loadSibling } from '../src/engine.js';
 import { linkEngineInto } from './helpers/engine.js';
 import { startFakeOllama } from './helpers/ollama.js';
 
@@ -66,6 +67,16 @@ describe('e2e: init -> doctor -> store/recall', () => {
       (process.stdout as unknown as { write: typeof write }).write = write;
     }
     expect(code).toBe(0);
+    const checkpoint = JSON.parse(readFileSync(join(dir, '.fortytwo/oneiros/checkpoint.json'), 'utf8'));
+    expect(checkpoint.position).toBe(0);
+    const memory: any = await loadSibling('@justfortytwo/memory', dir);
+    const h = memory.openDb(join(dir, 'db/fortytwo.db'));
+    try {
+      const jobs = memory.listActive(h).filter((j: any) => j.kind === 'persona.oneiros');
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0]).toMatchObject({ recurrence: '17 3 * * *', payload: null, status: 'pending' });
+    } finally { await h.k.destroy(); h.raw.close(); }
+
     // onboarding points at the user-facing lifecycle, not the internal service bins
     expect(printed).toContain('Fortytwo is ready.');
     expect(printed).toContain('  fortytwo start');
@@ -78,7 +89,7 @@ describe('e2e: init -> doctor -> store/recall', () => {
     expect(shim).toContain('fortytwo-shim');
     expect(shim).not.toContain(dir);
     expect(printed).toContain(`✓ fortytwo command: ${join(dir, 'user-bin', 'fortytwo')}`);
-    for (const f of ['CLAUDE.md', '.env', '.mcp.json', '.fortytwo/identity.json', '.fortytwo/state.json', 'context/OWNER.md', 'db/fortytwo.db']) {
+    for (const f of ['CLAUDE.md', '.env', '.mcp.json', '.fortytwo/identity.json', '.fortytwo/state.json', 'context/OWNER.md', 'db/fortytwo.db', '.fortytwo/oneiros/checkpoint.json']) {
       expect(existsSync(join(dir, f)), `expected ${f} to exist`).toBe(true);
     }
   });

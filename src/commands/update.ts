@@ -9,21 +9,24 @@
 //      the install lands, so rollback always targets the set that was running.
 //   4. POST-VERIFY with doctor. On failure: leave the new set in place but LOUDLY
 //      point at `fortytwo rollback` — rollback is MANUAL by design (never auto-
-//      revert, so the user can inspect first). On success: re-render the persona
-//      scaffold (idempotent) in case a new template version shipped.
+//      revert, so the user can inspect first). On success: reconcile machine-owned runtime assets only.
+//      Existing context is never re-rendered by update.
 //
 // rollback re-installs state.json's `previous` set and rotates the ledger back.
 // Both share the resolve/install primitives below and are unit-tested through an
 // injected `*Deps` (so no test touches the network or the real npm).
 
 import { spawnSync } from 'node:child_process';
+import { isPidAlive, liveRuntime } from '../runtime.js';
+import { HEARTBEAT_STALE_MS } from './doctor.js';
 import {
-  recordVersionSet, readState, readIdentity,
+  recordVersionSet, readState,
   type VersionPin, type InstallState,
 } from '../state.js';
-import { compareSemver, readInstalledVersion, readSelfCompatRanges, satisfiesRange } from '../engine.js';
+import { compareSemver, readInstalledVersion, readSelfCompatRanges, readSelfVersion, satisfiesRange } from '../engine.js';
 import { runDoctorChecks, defaultDoctorDeps, type CheckResult } from './doctor.js';
-import { renderPersona } from '../render.js';
+import { reconcileOneiros } from '../oneiros.js';
+import { readProjectSetting, DEFAULT_DB_PATH, CLI_PACKAGE, cliInstallSpec } from './init.js';
 
 // --- pure: pick the latest published version satisfying a range ---
 
@@ -62,7 +65,11 @@ export async function resolveLatestInRange(
 export interface InstallResult { ok: boolean; detail: string }
 
 export interface UpdateDeps {
+  /** Running CLI, not the target project package; optional for embedded callers. */
+  runningInstallerVersion?: () => string | null;
+  persistInstaller?: (exactSpec: string) => InstallResult;
   readState: () => InstallState | null;
+  runtimeActive?: () => boolean;
   installedVersion: (spec: string) => string | null;
   /** spec -> declared semver range (this CLI's fortytwo.compat). */
   compatRanges: Record<string, string>;
@@ -74,8 +81,8 @@ export interface UpdateDeps {
   doctor: () => Promise<{ results: CheckResult[]; ok: boolean }>;
   /** Persist the resolved set, rotating current -> previous. */
   record: (pins: VersionPin[]) => void;
-  /** Re-render the persona scaffold (idempotent). */
-  render: () => void;
+  /** Reconcile machine-owned runtime assets; never render persona context. */
+  reconcile: () => Promise<void>;
   out: (s: string) => void;
   err: (s: string) => void;
 }
@@ -102,6 +109,35 @@ export async function performUpdate(deps: UpdateDeps, flags: { dryRun?: boolean 
     return 2;
   }
 
+  if (!flags.dryRun && deps.runtimeActive?.()) {
+    deps.err('update: stop the running runtime first (`fortytwo stop`, or your service manager), run `fortytwo update`, then `fortytwo start`. No packages or context were changed.\n');
+    return 1;
+  }
+
+  if (deps.runningInstallerVersion) {
+    const running = deps.runningInstallerVersion();
+    const installed = deps.installedVersion(CLI_PACKAGE);
+    if (!running || !deps.persistInstaller) {
+      deps.err('update: cannot determine or persist the running installer version.\n');
+      return 1;
+    }
+    if (installed && compareVersions(running, installed) < 0) {
+      deps.err('update: the project installer is newer than this command. Use the project-local fortytwo update.\n');
+      return 1;
+    }
+    const spec = cliInstallSpec(running, installed);
+    if (spec) {
+      deps.out(`update: pin project installer to ${spec}${flags.dryRun ? ' (dry-run)' : ''}\n`);
+      if (!flags.dryRun) {
+        const result = deps.persistInstaller(spec);
+        if (!result.ok) {
+          deps.err(`update: installer persistence failed (${result.detail}). Retry update before starting services.\n`);
+          return 1;
+        }
+      }
+    }
+  }
+
   // The engine = the declared compat siblings that are CURRENTLY installed. We
   // upgrade what's there; we don't pull in siblings the user deliberately omitted.
   const ranges: Record<string, string> = {};
@@ -123,6 +159,7 @@ export async function performUpdate(deps: UpdateDeps, flags: { dryRun?: boolean 
   const changed = target.filter((t) => versionOf(current, t.name) !== t.resolved);
 
   if (changed.length === 0) {
+    if (!flags.dryRun) await deps.reconcile();
     deps.out(
       'update: already at the latest in-range version:\n' +
       current.map((p) => `  ${p.name}@${p.resolved} (${p.range})`).join('\n') + '\n',
@@ -161,8 +198,8 @@ export async function performUpdate(deps: UpdateDeps, flags: { dryRun?: boolean 
     return 1;
   }
 
-  deps.render();
-  deps.out('\nupdate: healthy — engine upgraded.\n');
+  await deps.reconcile();
+  deps.out('\nupdate: healthy — engine upgraded. Start services with `fortytwo start` (or your service manager).\n');
   return 0;
 }
 
@@ -208,8 +245,8 @@ export function fetchPublishedVersions(pkg: string): Promise<string[]> {
   });
 }
 
-function npmInstall(specs: string[], root: string): InstallResult {
-  const res = spawnSync('npm', ['install', '--no-audit', '--no-fund', ...specs], { cwd: root, stdio: 'inherit' });
+function npmInstall(specs: string[], root: string, flags: string[] = []): InstallResult {
+  const res = spawnSync('npm', ['install', '--no-audit', '--no-fund', ...flags, ...specs], { cwd: root, stdio: 'inherit' });
   if (res.status === 0) return { ok: true, detail: 'ok' };
   return { ok: false, detail: res.error ? res.error.message : `npm exited ${res.status}` };
 }
@@ -221,14 +258,21 @@ function parseUpdateArgs(argv: string[]): { dryRun?: boolean } {
 export async function runUpdate(argv: string[]): Promise<number> {
   const root = process.cwd();
   const deps: UpdateDeps = {
+    runningInstallerVersion: readSelfVersion,
+    persistInstaller: (spec) => npmInstall([spec], root, ['--save-exact']),
     readState: () => readState(root),
+    runtimeActive: () => {
+      if (liveRuntime(root)) return true;
+      const heartbeat = defaultDoctorDeps().schedulerHeartbeat();
+      return !!heartbeat && Date.now() - Date.parse(heartbeat.ts) <= HEARTBEAT_STALE_MS && isPidAlive(heartbeat.pid);
+    },
     installedVersion: readInstalledVersion,
     compatRanges: readSelfCompatRanges(),
     fetchVersions: fetchPublishedVersions,
     install: (specs) => npmInstall(specs, root),
     doctor: () => runDoctorChecks(defaultDoctorDeps()),
     record: (pins) => { recordVersionSet(pins, root); },
-    render: () => { const id = readIdentity(root); if (id) renderPersona(id, { root }); },
+    reconcile: () => reconcileOneiros(root, readProjectSetting('DB_PATH', root) ?? DEFAULT_DB_PATH),
     out: (s) => process.stdout.write(s),
     err: (s) => process.stderr.write(s),
   };
