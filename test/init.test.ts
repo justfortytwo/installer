@@ -391,7 +391,7 @@ describe('declared engine compat', () => {
     expect(readSelfCompatRanges()['@justfortytwo/scheduler']).toBe('1.0.0-3');
   });
   it('pins memory to the exact Oneiros cursor pre-release (a caret on 0.1.x would never select it)', () => {
-    expect(readSelfCompatRanges()['@justfortytwo/memory']).toBe('1.0.0-1');
+    expect(readSelfCompatRanges()['@justfortytwo/memory']).toBe('1.0.0-2');
   });
   it('pins persona to the exact Oneiros pre-release (a caret would never select it)', () => {
     expect(readSelfCompatRanges()['@justfortytwo/persona']).toBe('1.0.0-1');
