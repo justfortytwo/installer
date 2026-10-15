@@ -58,7 +58,7 @@ export interface DoctorDeps {
 }
 
 async function checkGate(deps: DoctorDeps): Promise<CheckResult> {
-  const name = 'safety gate';
+  const name = 'gate package compatibility';
   const gate = await deps.loadGate();
   if (!gate) {
     return { name, ok: false, required: true, detail: '@justfortytwo/gate is not installed' };
@@ -67,7 +67,7 @@ async function checkGate(deps: DoctorDeps): Promise<CheckResult> {
   if (v !== EXPECTED_POLICY_SCHEMA) {
     return { name, ok: false, required: true, detail: `policySchema version ${v} != expected ${EXPECTED_POLICY_SCHEMA}` };
   }
-  return { name, ok: true, required: true, detail: `gate present, policySchema v${v}` };
+  return { name, ok: true, required: true, detail: `Gate package present; policySchema v${v} compatible. Optional Claude hook activation and enforcement are not checked.` };
 }
 
 async function checkMemoryContract(deps: DoctorDeps): Promise<CheckResult> {

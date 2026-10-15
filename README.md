@@ -89,7 +89,7 @@ gitignored `.fortytwo/identity.json`; neither is ever committed.
 | `stop`     | Stop the `fortytwo start` running for this project. It signals only the process recorded in `.fortytwo/runtime.json`, and only while that record's heartbeat is fresh and its OS process-start identity matches; it never looks for processes by name. |
 | `init`     | Install any missing engine packages, pin this CLI into the project and install the `fortytwo` launcher (see [The `fortytwo` command](#the-fortytwo-command)), then capture your assistant's name + owner details (interactive, or via flags/env for CI). Writes `.fortytwo/identity.json`, secrets + `ALLOWED_CHAT_IDS` to `.env`, wires `.mcp.json`, renders the persona, provisions local infra (pulls the embedder model, migrates the memory DB), and records the installed version set. |
 | `pair`     | Issue a one-time `/login` pairing code, persisted to the bridge's bindings db so the running bridge can redeem it (the dynamic counterpart to the static `ALLOWED_CHAT_IDS` allowlist). Refuses, and tells you to run `fortytwo start`, when Telegram isn't running; `--force` issues a code anyway (for a bridge you run yourself). |
-| `doctor`   | Health-check the engine: assert the gate's `POLICY_SCHEMA_VERSION` and memory's `MEMORY_TOOL_CONTRACT_VERSION` match what this CLI expects, confirm the memory DB is migrated, cross-check installed sibling versions against the declared compatibility ranges, and check the embedder model is pulled (warn-only). |
+| `doctor`   | Health-check the engine: check Gate package compatibility (`POLICY_SCHEMA_VERSION`) and memory's `MEMORY_TOOL_CONTRACT_VERSION` match what this CLI expects, confirm the memory DB is migrated, cross-check installed sibling versions against the declared compatibility ranges, and check the embedder model is pulled (warn-only). |
 | `update`   | Resolve the latest in-range version of each **installed** engine package, install it, rotate the rollback baseline, then run `doctor` to verify. `--dry-run` reports the resolved set without installing. |
 | `rollback` | Re-install the previous version set recorded before the last `update`, then run `doctor`. Manual by design — never auto-triggered, so you can inspect a bad upgrade first. |
 | `enrich`   | Capture more answers to deepen the persona, then re-render (no clobber). |
@@ -287,3 +287,13 @@ The subshell keeps fail-fast settings out of your interactive shell.
     node:22 node /code/test/runtime-container.mjs check
 )
 ```
+
+## Release notes — 1.0.0-13
+
+Doctor's former `safety gate` check is now `gate package compatibility`.
+It still fails for a missing package or incompatible policy schema. Success means
+only that the package/schema is compatible: optional Claude hook activation and
+enforcement are not checked. Doctor does not report Gate as active or inactive.
+Claude Code owns tool permissions; Gate adds optional policy through explicitly
+configured Claude hooks/plugins. The library remains required by Telegram's
+attachment provenance helpers even when its policy hook is not enabled.

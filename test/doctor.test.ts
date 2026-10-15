@@ -61,22 +61,23 @@ describe('runDoctorChecks', () => {
   it('all healthy → ok, with a check per dimension', async () => {
     const { results, ok } = await runDoctorChecks(goodDeps());
     expect(ok).toBe(true);
+    expect(byName(results)['gate package compatibility'].detail).toBe('Gate package present; policySchema v1 compatible. Optional Claude hook activation and enforcement are not checked.');
     const names = results.map((r) => r.name);
     expect(names).toEqual(
-      expect.arrayContaining(['safety gate', 'memory-mcp contract', 'fortytwo.compat', 'embedder model', 'db migrations']),
+      expect.arrayContaining(['gate package compatibility', 'memory-mcp contract', 'fortytwo.compat', 'embedder model', 'db migrations']),
     );
   });
 
   it('fails (required) when the gate is not installed', async () => {
     const { results, ok } = await runDoctorChecks(goodDeps({ loadGate: async () => null }));
     expect(ok).toBe(false);
-    expect(byName(results)['safety gate'].ok).toBe(false);
+    expect(byName(results)['gate package compatibility'].ok).toBe(false);
   });
 
   it('fails when the gate POLICY_SCHEMA_VERSION mismatches what the CLI expects', async () => {
     const { results, ok } = await runDoctorChecks(goodDeps({ loadGate: async () => ({ POLICY_SCHEMA_VERSION: 2 }) }));
     expect(ok).toBe(false);
-    expect(byName(results)['safety gate'].detail).toMatch(/schema|version|expect/i);
+    expect(byName(results)['gate package compatibility'].detail).toMatch(/schema|version|expect/i);
   });
 
   it('fails when the memory contract version mismatches', async () => {
