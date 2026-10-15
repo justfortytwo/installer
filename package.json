@@ -1,7 +1,7 @@
 {
   "name": "@justfortytwo/installer",
-  "version": "1.0.0-10",
-  "description": "All-in-one installer and lifecycle CLI for fortytwo \u2014 scaffolds the persona surface and provisions the npm engine (memory MCP, safety gate, channel adapters, embedder).",
+  "version": "1.0.0-11",
+  "description": "All-in-one installer and lifecycle CLI for fortytwo — scaffolds the persona surface and provisions the npm engine (memory MCP, safety gate, channel adapters, embedder).",
   "license": "MIT",
   "author": {
     "name": "Enrico Deleo",
@@ -45,7 +45,7 @@
     "vitest": "^2.1.0"
   },
   "fortytwo": {
-    "comment": "Compatibility contract this CLI version was authored against \u2014 the SINGLE source of truth for engine sibling versions (deliberately not peerDependencies: npm would hard-fail installer upgrades with ERESOLVE whenever an installed sibling sits outside the new range). init installs these ranges, doctor cross-checks the *installed* siblings against them, update resolves latest-in-range and records the set into .fortytwo/state.json for rollback.",
+    "comment": "Compatibility contract this CLI version was authored against — the SINGLE source of truth for engine sibling versions (deliberately not peerDependencies: npm would hard-fail installer upgrades with ERESOLVE whenever an installed sibling sits outside the new range). init installs these ranges, doctor cross-checks the *installed* siblings against them, update resolves latest-in-range and records the set into .fortytwo/state.json for rollback.",
     "compat": {
       "@justfortytwo/memory": "1.0.0-2",
       "@justfortytwo/gate": "^0.1.0",
