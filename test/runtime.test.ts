@@ -1,3 +1,4 @@
+import { readProcessIdentity } from '../src/process-identity.js';
 // `fortytwo start` supervisor: real child processes from fixture service
 // packages in a tmp project, signals injected through an EventEmitter.
 //
@@ -5,7 +6,7 @@
 // then idle until SIGTERM — or misbehave (exit at once, ignore SIGTERM) — so the
 // tests observe real spawn/stdio/signal behavior without Telegram or Claude.
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
@@ -13,11 +14,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   buildServiceEnv, planServices, supervise, liveRuntime, readRuntimeState, runtimeStatePath,
-  isPidAlive, serviceRunning, RUNTIME_STALE_MS, type RuntimeState,
+  isPidAlive, sameRuntimeProcess, serviceRunning, RUNTIME_STALE_MS, type RuntimeState,
 } from '../src/runtime.js';
 import { telegramUnavailableMessage } from '../src/commands/pair.js';
 import { statusLines } from '../src/commands/status.js';
 import { nextSteps } from '../src/commands/init.js';
+import { runStart } from '../src/commands/start.js';
+import { runStatus } from '../src/commands/status.js';
 import { runStop } from '../src/commands/stop.js';
 
 // Idles until SIGTERM; reports the env it got as one JSON line.
@@ -147,7 +150,7 @@ describe('supervise (fortytwo start)', () => {
 
 describe('runtime ownership (status / stop / pair read it)', () => {
   const state = (over: Partial<RuntimeState> = {}): RuntimeState => ({
-    pid: process.pid, startedAt: new Date().toISOString(), heartbeatAt: new Date().toISOString(),
+    pid: process.pid, processIdentity: readProcessIdentity(process.pid)!, startedAt: new Date().toISOString(), heartbeatAt: new Date().toISOString(),
     services: [{ name: 'telegram', pid: 1, state: 'running' }], skipped: [], ...over,
   });
   const write = (s: RuntimeState) => {
@@ -161,6 +164,54 @@ describe('runtime ownership (status / stop / pair read it)', () => {
     expect(liveRuntime(root)?.pid).toBe(process.pid);
     expect(liveRuntime(root, Date.now() + RUNTIME_STALE_MS + 1000)).toBeNull(); // stale file: never trusted
     expect(liveRuntime(root, Date.now(), () => false)).toBeNull();           // dead pid
+  });
+
+  it('does not trust legacy records or an unreadable process identity', () => {
+    const legacy = state(); delete legacy.processIdentity;
+    write(legacy);
+    expect(liveRuntime(root)).toBeNull();
+    expect(sameRuntimeProcess(state(), () => true, () => null)).toBe(false);
+  });
+
+  it('keeps ownership scoped to the project and rejects invalid signal targets', () => {
+    write(state());
+    expect(liveRuntime(join(root, 'another-project'))).toBeNull();
+    for (const pid of [0, -1, 1.5, NaN]) {
+      write(state({ pid }));
+      expect(liveRuntime(root)).toBeNull();
+    }
+  });
+
+  it('rejects a reused live PID immediately despite a fresh heartbeat', () => {
+    write({ ...state(), processIdentity: 'previous-process-generation' } as RuntimeState);
+    expect(isPidAlive(process.pid)).toBe(true);
+    expect(liveRuntime(root)).toBeNull();
+  });
+
+  it('start replaces a previous generation immediately and status rejects it', async () => {
+    write({ ...state(), processIdentity: 'previous-container-generation' } as RuntimeState);
+    fixturePkg(root, '@justfortytwo/scheduler', 'fortytwo-scheduler', CRASH);
+    const cwd = process.cwd();
+    process.chdir(root);
+    try {
+      expect(await runStatus([])).toBe(3);
+      expect(await runStart([])).toBe(3); // service actually started and exited
+    } finally { process.chdir(cwd); }
+  });
+
+  it('refuses a second start against the actual same supervisor', async () => {
+    const h = harness([{ name: 'scheduler', body: IDLE('scheduler') }], buildServiceEnv({}, {}, root));
+    const cwd = process.cwd();
+    try {
+      await until(() => !!h.reported('scheduler'));
+      process.chdir(root);
+      expect(liveRuntime(root)?.pid).toBe(process.pid);
+      expect(await runStart([])).toBe(1);
+    } finally {
+      process.chdir(cwd);
+      h.signals.emit('SIGTERM');
+      await h.done;
+    }
   });
 
   it('pair: warns and gives no code when Telegram is not running; null when it is', () => {
@@ -196,12 +247,14 @@ describe('fortytwo stop', () => {
   };
   const record = (pid: number, heartbeatAt: string) => {
     mkdirSync(join(root, '.fortytwo'), { recursive: true });
-    writeFileSync(runtimeStatePath(root), JSON.stringify({ pid, startedAt: heartbeatAt, heartbeatAt, services: [], skipped: [] }));
+    writeFileSync(runtimeStatePath(root), JSON.stringify({ pid, processIdentity: readProcessIdentity(pid), startedAt: heartbeatAt, heartbeatAt, services: [], skipped: [] }));
   };
 
   it('signals only the recorded supervisor while its heartbeat is fresh, and waits for it to exit', async () => {
     const sup = spawn(process.execPath, ['-e', "process.on('SIGTERM', () => process.exit(0)); setInterval(() => {}, 1000)"]);
     await until(() => sup.pid !== undefined && isPidAlive(sup.pid));
+    expect(readProcessIdentity(sup.pid!)).toBeTruthy();
+    expect(readProcessIdentity(sup.pid!)).toBe(readProcessIdentity(sup.pid!));
     record(sup.pid!, new Date().toISOString());
     const cwd0 = process.cwd();
     process.chdir(root);
@@ -211,6 +264,26 @@ describe('fortytwo stop', () => {
       process.chdir(cwd0);
     }
     expect(isPidAlive(sup.pid!)).toBe(false);
+  });
+
+  it('never signals an unrelated live child with a fresh mismatched identity', async () => {
+    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)']);
+    const cwd = process.cwd();
+    const kill = vi.spyOn(process, 'kill');
+    try {
+      await until(() => child.pid !== undefined && isPidAlive(child.pid));
+      record(child.pid!, new Date().toISOString());
+      const stale = { ...readRuntimeState(root)!, processIdentity: 'old-start-identity' };
+      writeFileSync(runtimeStatePath(root), JSON.stringify(stale));
+      process.chdir(root);
+      expect(await quiet(() => runStop([], { timeoutMs: 1 }))).toBe(0);
+      expect(kill.mock.calls.filter(([, signal]) => signal === 'SIGTERM')).toEqual([]);
+      expect(isPidAlive(child.pid!)).toBe(true);
+    } finally {
+      kill.mockRestore();
+      process.chdir(cwd);
+      child.kill('SIGKILL');
+    }
   });
 
   it('never signals a pid from a stale runtime file (it may have been reused)', async () => {

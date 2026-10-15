@@ -86,7 +86,7 @@ gitignored `.fortytwo/identity.json`; neither is ever committed.
 |------------|--------------|
 | `start`    | Run fortytwo in the foreground: load the project `.env` (the shell/container env wins over it), start every installed and configured service (the Telegram bridge needs `TELEGRAM_BOT_TOKEN`; the scheduler daemon needs nothing), prefix and forward their logs, and stop them all on Ctrl+C/SIGTERM. If a service exits, the others are stopped and `start` exits non-zero. It never daemonizes or restarts anything — see [Running as a service](#running-as-a-service). |
 | `status`   | Show whether fortytwo, the Telegram bridge and the scheduler are running, and whether memory is configured. Exits 0 when `fortytwo start` is running, 3 when not (usable as a health check). |
-| `stop`     | Stop the `fortytwo start` running for this project. It signals only the process recorded in `.fortytwo/runtime.json`, and only while that record's heartbeat is fresh; it never looks for processes by name. |
+| `stop`     | Stop the `fortytwo start` running for this project. It signals only the process recorded in `.fortytwo/runtime.json`, and only while that record's heartbeat is fresh and its OS process-start identity matches; it never looks for processes by name. |
 | `init`     | Install any missing engine packages, pin this CLI into the project and install the `fortytwo` launcher (see [The `fortytwo` command](#the-fortytwo-command)), then capture your assistant's name + owner details (interactive, or via flags/env for CI). Writes `.fortytwo/identity.json`, secrets + `ALLOWED_CHAT_IDS` to `.env`, wires `.mcp.json`, renders the persona, provisions local infra (pulls the embedder model, migrates the memory DB), and records the installed version set. |
 | `pair`     | Issue a one-time `/login` pairing code, persisted to the bridge's bindings db so the running bridge can redeem it (the dynamic counterpart to the static `ALLOWED_CHAT_IDS` allowlist). Refuses, and tells you to run `fortytwo start`, when Telegram isn't running; `--force` issues a code anyway (for a bridge you run yourself). |
 | `doctor`   | Health-check the engine: assert the gate's `POLICY_SCHEMA_VERSION` and memory's `MEMORY_TOOL_CONTRACT_VERSION` match what this CLI expects, confirm the memory DB is migrated, cross-check installed sibling versions against the declared compatibility ranges, and check the embedder model is pulled (warn-only). |
@@ -245,3 +245,45 @@ coordinated versions are released, use the new CLI, stop services with
 `fortytwo stop` (or the service manager), run `fortytwo update`, then restart via
 `fortytwo start`. Update refuses live services before changing anything so an
 old scheduler cannot claim jobs it does not understand. No second init is needed.
+
+### Runtime ownership across container restarts
+
+`runtime.json` records `processIdentity` alongside the supervisor PID and
+heartbeat. On Linux it combines the kernel boot ID, PID namespace and field 22
+(start ticks) of `/proc/<pid>/stat`. A fresh file from an earlier container cannot
+claim a new process merely because its PID was reused. Start, status, pair and
+update use the same ownership check; stop also rechecks immediately before
+signalling and while waiting for that process generation to exit.
+
+On macOS and other systems with `ps -p <pid> -o lstart=`, the fallback compares
+the OS start timestamp using a fixed locale/timezone and a bounded command.
+This fallback has second-level precision; it cannot distinguish reuse of the
+same PID within the same second. Linux uses kernel start ticks instead. Missing
+or unreadable identity is never accepted as proof of ownership, and a supervisor
+that cannot read its own identity refuses to start services.
+
+Legacy runtime records without `processIdentity` are treated as stale. Stop an
+older running supervisor through its container/service manager before upgrading;
+its PID-only record cannot safely be adopted or signalled by the new CLI. The
+heartbeat timeout, foreground supervision and external restart policy are unchanged.
+
+Identity is rechecked immediately before `SIGTERM`, but Node's PID-based signal
+API does not make the check and signal atomic. Eliminating that final OS race
+would require a native process handle (for example Linux pidfd), beyond this fix.
+
+To reproduce the two-container ownership regression locally (Docker and a
+`node:22` image required), run from the installer repository. Both containers
+use PID 1 and share only the disposable workspace. The repository is read-only.
+The subshell keeps fail-fast settings out of your interactive shell.
+
+```sh
+(
+  set -euo pipefail
+  npm run build
+  fixture_dir="$(mktemp -d)"
+  docker run --rm -v "$PWD":/code:ro -v "$fixture_dir":/workspace -w /workspace \
+    node:22 node /code/test/runtime-container.mjs seed
+  docker run --rm -v "$PWD":/code:ro -v "$fixture_dir":/workspace -w /workspace \
+    node:22 node /code/test/runtime-container.mjs check
+)
+```

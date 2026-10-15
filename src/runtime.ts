@@ -11,9 +11,8 @@
 //
 // `.fortytwo/runtime.json` records the running supervisor (its pid, a heartbeat
 // refreshed every few seconds, and its children). `status`, `stop` and `pair`
-// read it, and it is removed on exit. A stale heartbeat means "not running", so a
-// file left behind by a killed supervisor can never make `stop` signal a pid that
-// has since been reused.
+// read it, and it is removed on exit. Both a fresh heartbeat and a matching OS
+// process-start identity are required: a live PID alone does not prove ownership.
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
@@ -21,6 +20,7 @@ import type { EventEmitter } from 'node:events';
 import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { findSiblingDir } from './engine.js';
+import { readProcessIdentity } from './process-identity.js';
 
 /** A long-running service `fortytwo start` can supervise. */
 export interface ServiceSpec {
@@ -92,6 +92,8 @@ export function planServices(
 export interface RuntimeState {
   /** The `fortytwo start` supervisor process. */
   pid: number;
+  /** OS process generation; absent in legacy records, which are not trusted. */
+  processIdentity?: string;
   startedAt: string;
   /** Refreshed every few seconds while the supervisor is alive. */
   heartbeatAt: string;
@@ -123,6 +125,7 @@ function writeRuntimeState(root: string, state: RuntimeState): void {
 }
 
 export function isPidAlive(pid: number): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
     return true;
@@ -131,7 +134,18 @@ export function isPidAlive(pid: number): boolean {
   }
 }
 
-/** The running supervisor's state, or null if none: no file, stale heartbeat, or dead pid. */
+/** Match a recorded process generation, including when waiting for shutdown. */
+export function sameRuntimeProcess(
+  state: RuntimeState,
+  alive: (pid: number) => boolean = isPidAlive,
+  identity: (pid: number) => string | null = readProcessIdentity,
+): boolean {
+  return Number.isSafeInteger(state.pid) && state.pid > 0
+    && typeof state.processIdentity === 'string' && state.processIdentity.length > 0
+    && alive(state.pid) && identity(state.pid) === state.processIdentity;
+}
+
+/** A live supervisor requires a fresh heartbeat AND the same OS process. */
 export function liveRuntime(
   root: string,
   nowMs: number = Date.now(),
@@ -141,7 +155,7 @@ export function liveRuntime(
   if (!s || typeof s.pid !== 'number') return null;
   const beat = new Date(s.heartbeatAt).getTime();
   if (!Number.isFinite(beat) || nowMs - beat > RUNTIME_STALE_MS) return null;
-  return alive(s.pid) ? s : null;
+  return sameRuntimeProcess(s, alive) ? s : null;
 }
 
 /** True when a live `fortytwo start` is currently running the named service. */
@@ -177,6 +191,8 @@ export function supervise(services: PlannedService[], opts: SuperviseOptions): P
   const signals = opts.signals ?? process;
   const graceMs = opts.graceMs ?? 10_000;
   const startedAt = new Date().toISOString();
+  const processIdentity = readProcessIdentity(process.pid);
+  if (!processIdentity) throw new Error('Cannot establish supervisor process identity; refusing to start services.');
 
   return new Promise<number>((resolveExit) => {
     const children = new Map<string, ChildProcess>();
@@ -187,6 +203,7 @@ export function supervise(services: PlannedService[], opts: SuperviseOptions): P
 
     const state = (): RuntimeState => ({
       pid: process.pid,
+      processIdentity,
       startedAt,
       heartbeatAt: new Date().toISOString(),
       services: services.map((s) => ({

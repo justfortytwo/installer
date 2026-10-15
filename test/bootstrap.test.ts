@@ -1,3 +1,4 @@
+import { readProcessIdentity } from '../src/process-identity.js';
 import { it, expect } from 'vitest';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -57,7 +58,7 @@ it('external CLI persists itself through real npm and the existing launcher perm
     expect((await run(launcher,['--version'])).stdout).toContain('1.0.0-9');
     const snapshot=()=>Object.fromEntries([...curated,'package.json','package-lock.json'].map(f=>[f,readFileSync(join(project,f),'utf8')]));
     const before=snapshot();
-    writeFileSync(join(project,'.fortytwo/runtime.json'),JSON.stringify({runtimeVersion:1,pid:process.pid,startedAt:new Date().toISOString(),heartbeatAt:new Date().toISOString(),children:[]}));
+    writeFileSync(join(project,'.fortytwo/runtime.json'),JSON.stringify({runtimeVersion:1,pid:process.pid,processIdentity:readProcessIdentity(process.pid),startedAt:new Date().toISOString(),heartbeatAt:new Date().toISOString(),children:[]}));
     await expect(run(process.execPath,[join(external,'dist/index.js'),'update'])).rejects.toMatchObject({code:1});
     expect(snapshot()).toEqual(before);
     await run(process.execPath,[join(external,'dist/index.js'),'update','--dry-run']);

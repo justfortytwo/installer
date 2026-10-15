@@ -1,3 +1,4 @@
+import { readProcessIdentity } from '../src/process-identity.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -12,7 +13,7 @@ function markTelegramRunning(root: string): void {
   const now = new Date().toISOString();
   mkdirSync(join(root, '.fortytwo'), { recursive: true });
   writeFileSync(runtimeStatePath(root), JSON.stringify({
-    pid: process.pid, startedAt: now, heartbeatAt: now,
+    pid: process.pid, processIdentity: readProcessIdentity(process.pid)!, startedAt: now, heartbeatAt: now,
     services: [{ name: 'telegram', pid: process.pid, state: 'running' }], skipped: [],
   }));
 }

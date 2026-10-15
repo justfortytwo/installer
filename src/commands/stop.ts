@@ -1,11 +1,11 @@
 // stop — stop a `fortytwo start` running for this project.
 //
 // Signals ONLY the supervisor recorded in .fortytwo/runtime.json, and only while
-// its heartbeat is fresh (see runtime.ts), so a stale file can never hit a
-// reused pid. It never searches for or kills processes by name. The supervisor
+// its heartbeat is fresh and OS process identity matches (see runtime.ts).
+// It never searches for or kills processes by name. The supervisor
 // then stops its own services. Under Docker/systemd prefer their own stop.
 
-import { isPidAlive, liveRuntime } from '../runtime.js';
+import { sameRuntimeProcess, liveRuntime } from '../runtime.js';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -16,6 +16,8 @@ export async function runStop(_argv: string[], opts: { timeoutMs?: number } = {}
     return 0;
   }
   process.stdout.write(`Stopping fortytwo (pid ${runtime.pid})…\n`);
+  // Revalidate the original generation immediately before signalling.
+  if (!sameRuntimeProcess(runtime)) return 0;
   try {
     process.kill(runtime.pid, 'SIGTERM');
   } catch (err) {
@@ -24,7 +26,7 @@ export async function runStop(_argv: string[], opts: { timeoutMs?: number } = {}
   }
   const deadline = Date.now() + (opts.timeoutMs ?? 20_000);
   while (Date.now() < deadline) {
-    if (!isPidAlive(runtime.pid)) {
+    if (!sameRuntimeProcess(runtime)) {
       process.stdout.write('fortytwo stopped.\n');
       return 0;
     }
