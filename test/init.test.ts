@@ -381,10 +381,10 @@ describe('declared engine compat', () => {
     // engineInstallSpecs over the real compat (nothing present) must offer scheduler.
     expect(engineInstallSpecs(compat, () => false)).toContain(`@justfortytwo/scheduler@${compat['@justfortytwo/scheduler']}`);
   });
-  it('pins telegram to the exact 1.0.0-2 pre-release; runner stays transitive', () => {
+  it('pins telegram to the exact 1.0.0-3 pre-release; runner stays transitive', () => {
     const compat = readSelfCompatRanges();
-    expect(compat['@justfortytwo/telegram']).toBe('1.0.0-2');
-    expect(engineInstallSpecs(compat, () => false)).toContain('@justfortytwo/telegram@1.0.0-2');
+    expect(compat['@justfortytwo/telegram']).toBe('1.0.0-3');
+    expect(engineInstallSpecs(compat, () => false)).toContain('@justfortytwo/telegram@1.0.0-3');
     expect(Object.keys(compat)).not.toContain('@justfortytwo/runner');
   });
   it('pins scheduler with the internal Oneiros handler', () => {
