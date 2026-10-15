@@ -44,10 +44,10 @@ it('external CLI persists itself through real npm and the existing launcher perm
     const old=join(base,'old'); mkdirSync(old); cpSync(join(external,'dist'),join(old,'dist'),{recursive:true});
     await pack(old,{...pkg,version:'1.0.0-9'});
     const p=join(base,'persona');mkdirSync(p);
-    await pack(p,{name:persona,version:'1.0.0-1'});
+    await pack(p,{name:persona,version:pkg.fortytwo.compat[persona]});
     const env={...process.env,npm_config_registry:registry,npm_config_cache:join(base,'cache'),npm_config_update_notifier:'false'};
     writeFileSync(join(project,'package.json'),JSON.stringify({name:'bootstrap-fixture',private:true}));
-    await exec('npm',['install','--save-exact','--no-audit','--no-fund',`${cli}@1.0.0-9`,`${persona}@1.0.0-1`],{cwd:project,env});
+    await exec('npm',['install','--save-exact','--no-audit','--no-fund',`${cli}@1.0.0-9`,`${persona}@${pkg.fortytwo.compat[persona]}`],{cwd:project,env});
     mkdirSync(join(project,'.fortytwo')); mkdirSync(join(project,'context'));
     writeFileSync(join(project,'.fortytwo/state.json'),JSON.stringify({stateVersion:1,current:[],previous:null,lastUpdatedAt:''}));
     const curated=['CLAUDE.md','context/OWNER.md','context/PROFILE.md','context/SOUL.md','.fortytwo/identity.json'];

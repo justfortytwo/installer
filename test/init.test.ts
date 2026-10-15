@@ -394,7 +394,7 @@ describe('declared engine compat', () => {
     expect(readSelfCompatRanges()['@justfortytwo/memory']).toBe('1.0.0-2');
   });
   it('pins persona to the exact Oneiros pre-release (a caret would never select it)', () => {
-    expect(readSelfCompatRanges()['@justfortytwo/persona']).toBe('1.0.0-1');
+    expect(readSelfCompatRanges()['@justfortytwo/persona']).toBe('1.0.0-2');
   });
   it('keeps fortytwo.compat the only engine version list (no deps/peerDeps on @justfortytwo/*)', () => {
     const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as Record<

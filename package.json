@@ -49,7 +49,7 @@
     "compat": {
       "@justfortytwo/memory": "1.0.0-2",
       "@justfortytwo/gate": "^0.1.0",
-      "@justfortytwo/persona": "1.0.0-1",
+      "@justfortytwo/persona": "1.0.0-2",
       "@justfortytwo/telegram": "1.0.0-2",
       "@justfortytwo/scheduler": "1.0.0-3"
     }
