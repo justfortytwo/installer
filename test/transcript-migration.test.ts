@@ -152,6 +152,40 @@ describe('migrateChatToTranscript', () => {
     } finally { await db.close(); }
   });
 
+  it('keeps live rows appended before the migration above the cursor, so refine still sees them', async () => {
+    const { root, ids } = await fixture();
+    const persona: any = await loadSibling('@justfortytwo/persona', root);
+    const transcript: any = await loadSibling('@justfortytwo/transcript', root);
+    const P = ids[2]!;
+    let db = await open(root);
+    const live: number[] = [];
+    try {
+      persona.initialize(root, { database: db.memory.memoryHead(db.h).database, position: P });
+      await transcript.prepareTranscript(db.h);
+      const log = transcript.createTranscript(db.h, new db.memory.FakeEmbedder());
+      for (const content of ['live one', 'live two', 'live three']) {
+        live.push(await log.append({ channel: 'telegram', direction: 'inbound', actor: 'owner', kind: 'message', content }));
+      }
+      await new Promise((r) => setTimeout(r, 20)); // let background embeddings settle before closing
+    } finally { await db.close(); }
+
+    await migrateChatToTranscript(root, DB);
+    db = await open(root);
+    try {
+      const { memory, h } = db;
+      const cursor = persona.readCheckpoint(root, 'transcript');
+      expect(cursor.position).toBeLessThan(Math.min(...live));
+      const seen: number[] = [];
+      await persona.refine({
+        root,
+        memory: { head: () => memory.memoryHead(h), delta: (c: any) => memory.memoryDelta(h, c) },
+        transcript: { head: () => transcript.transcriptHead(h), delta: (c: any) => transcript.transcriptDelta(h, c) },
+        worker: async (input: any) => { for (const e of input.entries) if (e.source.startsWith('telegram:') || e.source.startsWith('scheduler:')) seen.push(e.id); return { additions: [] }; },
+      });
+      for (const id of live) expect(seen).toContain(id);
+    } finally { await db.close(); }
+  });
+
   it('leaves the transcript stream uninitialised without a memory checkpoint and never overwrites an existing one', async () => {
     const { root } = await fixture();
     const persona: any = await loadSibling('@justfortytwo/persona', root);

@@ -9,8 +9,8 @@
 //   3. verify every source id has its transcript row with the same content,
 //   4. only then delete from memory, all in ONE transaction (a failure leaves
 //      memory intact),
-//   5. start persona's transcript cursor after the history oneiros already
-//      consumed through the memory stream (never overwriting an existing one).
+//   5. start persona's transcript cursor below every unconsumed row (live, or
+//      legacy past the memory checkpoint); never overwrite an existing one.
 // Siblings load through loadSibling: a partial install skips, a broken one fails loud.
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -135,12 +135,20 @@ export async function migrateChatToTranscript(root: string, dbPath: string, deps
     const moved = h.raw.transaction(() => batches(ids).reduce((n, b) => n + deleteByIds(h, b), 0))();
 
     // The transcript cursor resumes after what oneiros already consumed via memory.
+    // Every row NOT consumed (a live row without legacy id, or a legacy row past
+    // the memory checkpoint) must stay above the cursor, so the cursor sits just
+    // below the lowest such row, else at the head. Live rows can precede migrated
+    // ones (e.g. the new bridge ran after a failed update), and then some consumed
+    // legacy rows land above the cursor and oneiros re-reads them: the safe
+    // direction (re-reading is acceptable, skipping is not), bounded by persona's
+    // eligibility and proposal rules.
     const consumed = persona?.readCheckpoint(root);
     if (persona && consumed && !persona.readCheckpoint(root, 'transcript')) {
-      const last = h.raw.prepare(
-        'SELECT MAX(id) AS id FROM transcript WHERE legacy_memory_id IS NOT NULL AND legacy_memory_id <= ?',
+      const head = transcript.transcriptHead(h);
+      const first = h.raw.prepare(
+        'SELECT MIN(id) AS id FROM transcript WHERE legacy_memory_id IS NULL OR legacy_memory_id > ?',
       ).get(consumed.position) as { id: number | null };
-      persona.initialize(root, { database: transcript.transcriptHead(h).database, position: last.id ?? 0 }, 'transcript');
+      persona.initialize(root, { database: head.database, position: first.id === null ? head.position : first.id - 1 }, 'transcript');
     }
     return { moved, skipped: false };
   } finally { await h.k.destroy(); h.raw.close(); }
