@@ -47,7 +47,7 @@ To remove it: delete the launcher (`init` prints its path) and, per project,
 `npm uninstall @justfortytwo/installer`.
 
 You only install **this** package — `init` installs the engine packages it needs
-on demand (`@justfortytwo/gate`, `/memory`, `/persona`, `/telegram`, `/scheduler`).
+on demand (`@justfortytwo/gate`, `/memory`, `/persona`, `/telegram`, `/scheduler`, `/transcript`).
 During the 1.0 pre-release, `/telegram`, `/scheduler` and `/persona` are pinned
 to exact pre-release versions (see `fortytwo.compat` in `package.json`); telegram
 and scheduler pull in `@justfortytwo/runner` themselves, so the installer never
@@ -57,7 +57,7 @@ trips npm's peer resolution. Pass
 `--no-install` to manage them yourself, and `--yes` (with `--answers <file.json>`
 or `FORTYTWO_*` env) for non-interactive installs. Point the memory engine at a
 remote embedder with `--ollama-base-url https://host` (threaded into `.mcp.json`,
-so the memory MCP server uses it — see [The embedder](#the-embedder)), and pre-seed the optional Telegram channel
+so the memory MCP server uses it — see [The embedder](#the-embedder)). When `@justfortytwo/transcript` is installed, `init` also lists it in `FORTYTWO_MCP_EXTENSIONS` on that `.mcp.json` entry (launching memory with `npx -y -p @justfortytwo/memory -p @justfortytwo/transcript fortytwo-memory` so both share one install), and `status`/`doctor` warn if the package and the env var disagree. Pre-seed the optional Telegram channel
 with `--telegram-bot-token <token>` / `--allowed-chat-ids <ids>` (or the matching
 env vars) — secrets are written to the gitignored `.env`, never prompted.
 

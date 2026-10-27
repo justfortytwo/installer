@@ -10,12 +10,15 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { liveRuntime, serviceRunning, type RuntimeState } from '../runtime.js';
-import { defaultDoctorDeps, HEARTBEAT_STALE_MS } from './doctor.js';
+import { defaultDoctorDeps, extensionWiringProblems, readMcpExtensions, HEARTBEAT_STALE_MS } from './doctor.js';
+import { readInstalledVersion } from '../engine.js';
 
 export interface StatusInput {
   runtime: RuntimeState | null;
   schedulerHeartbeat: { pid: number; ts: string } | null;
   memoryConfigured: boolean;
+  /** MCP extension wiring problems (see extensionWiringProblems); each becomes a Warning line. */
+  extensionProblems?: string[];
   nowMs: number;
 }
 
@@ -37,6 +40,7 @@ export function statusLines(i: StatusInput): string[] {
     : 'not running'));
 
   lines.push(row('Memory', i.memoryConfigured ? 'configured via MCP (Claude Code starts it on demand)' : 'not configured (run `fortytwo init`)'));
+  for (const p of i.extensionProblems ?? []) lines.push(row('Warning', p));
   return lines;
 }
 
@@ -58,6 +62,7 @@ export async function runStatus(_argv: string[]): Promise<number> {
     runtime,
     schedulerHeartbeat: defaultDoctorDeps().schedulerHeartbeat(),
     memoryConfigured: memoryConfigured(root),
+    extensionProblems: extensionWiringProblems(readMcpExtensions(root), (s) => readInstalledVersion(s, root)),
     nowMs: Date.now(),
   });
   process.stdout.write(lines.join('\n') + '\n');

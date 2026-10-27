@@ -115,22 +115,34 @@ export interface McpConfig {
   [k: string]: unknown;
 }
 
-/** Add (or replace) the `fortytwo-memory` MCP server entry, preserving others. */
+/** The package that extends the memory MCP server with transcript tools. */
+export const TRANSCRIPT_PACKAGE = '@justfortytwo/transcript';
+
+/**
+ * Add (or replace) the `fortytwo-memory` MCP server entry, preserving others.
+ * `extensions` (package names) are loaded by memory via FORTYTWO_MCP_EXTENSIONS.
+ * memory resolves them from its OWN npx install, so with extensions the launch
+ * uses `-p` for every package: they then share one npx prefix.
+ */
 export function buildMcpConfig(
   existing: McpConfig | null,
-  opts: { dbPath: string; ollamaBaseUrl?: string; embedModel?: string },
+  opts: { dbPath: string; ollamaBaseUrl?: string; embedModel?: string; extensions?: string[] },
 ): McpConfig {
   const cfg: McpConfig = existing ?? { mcpServers: {} };
   cfg.mcpServers = cfg.mcpServers ?? {};
+  const extensions = opts.extensions ?? [];
   cfg.mcpServers['fortytwo-memory'] = {
     command: 'npx',
-    args: ['-y', '@justfortytwo/memory'],
+    args: extensions.length > 0
+      ? ['-y', '-p', '@justfortytwo/memory', ...extensions.flatMap((e) => ['-p', e]), 'fortytwo-memory']
+      : ['-y', '@justfortytwo/memory'],
     // The memory MCP server reads these from its launch env (this block), not .env —
     // so the Ollama URL must be threaded here for a remote/custom endpoint to take effect.
     env: {
       DB_PATH: opts.dbPath,
       EMBED_MODEL: opts.embedModel ?? EMBED_MODEL,
       OLLAMA_BASE_URL: opts.ollamaBaseUrl ?? DEFAULT_OLLAMA_BASE_URL,
+      ...(extensions.length > 0 ? { FORTYTWO_MCP_EXTENSIONS: extensions.join(',') } : {}),
     },
   };
   return cfg;
@@ -162,9 +174,11 @@ function writeMcpJson(root: string, dbPath: string, ollamaBaseUrl: string): void
   const existing: McpConfig | null = existsSync(path)
     ? (JSON.parse(readFileSync(path, 'utf8')) as McpConfig)
     : null;
+  // Wire the transcript extension only when the package is actually installed.
+  const extensions = readInstalledVersion(TRANSCRIPT_PACKAGE, root) !== null ? [TRANSCRIPT_PACKAGE] : [];
   writeFileSync(
     path,
-    JSON.stringify(buildMcpConfig(existing, { dbPath, ollamaBaseUrl }), null, 2) + '\n',
+    JSON.stringify(buildMcpConfig(existing, { dbPath, ollamaBaseUrl, extensions }), null, 2) + '\n',
     'utf8',
   );
 }

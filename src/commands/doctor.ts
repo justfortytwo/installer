@@ -55,6 +55,58 @@ export interface DoctorDeps {
   schedulerHeartbeat: () => { pid: number; ts: string } | null;
   /** Returns the current time as an ISO string. */
   now: () => string;
+  /** The MCP extension wiring in .mcp.json; omitted = check skipped. */
+  mcpExtensions?: () => McpExtensionState | null;
+}
+
+/** What .mcp.json says about the memory server's extensions. */
+export interface McpExtensionState {
+  memoryEntry: boolean;
+  extensions: string[];
+}
+
+const TRANSCRIPT_PKG = '@justfortytwo/transcript';
+
+/** Read FORTYTWO_MCP_EXTENSIONS off the `fortytwo-memory` entry; null if .mcp.json is missing/unreadable. */
+export function readMcpExtensions(root: string = process.cwd()): McpExtensionState | null {
+  try {
+    const cfg = JSON.parse(readFileSync(join(root, '.mcp.json'), 'utf8')) as {
+      mcpServers?: Record<string, { env?: Record<string, unknown> } | undefined>;
+    };
+    const entry = cfg.mcpServers?.['fortytwo-memory'];
+    if (!entry) return { memoryEntry: false, extensions: [] };
+    const raw = entry.env?.FORTYTWO_MCP_EXTENSIONS;
+    const extensions = typeof raw === 'string' ? raw.split(',').map((x) => x.trim()).filter(Boolean) : [];
+    return { memoryEntry: true, extensions };
+  } catch {
+    return null;
+  }
+}
+
+/** Mismatches between installed extension packages and the .mcp.json env var (pure). */
+export function extensionWiringProblems(
+  state: McpExtensionState | null,
+  installedVersion: (spec: string) => string | null,
+): string[] {
+  if (!state?.memoryEntry) return [];
+  const problems: string[] = [];
+  if (installedVersion(TRANSCRIPT_PKG) !== null && !state.extensions.includes(TRANSCRIPT_PKG)) {
+    problems.push(`${TRANSCRIPT_PKG} is installed but not listed in FORTYTWO_MCP_EXTENSIONS in .mcp.json (re-run \`fortytwo init\` to wire it)`);
+  }
+  for (const ext of state.extensions) {
+    if (installedVersion(ext) === null) {
+      problems.push(`FORTYTWO_MCP_EXTENSIONS names ${ext}, which is not installed (npm install ${ext})`);
+    }
+  }
+  return problems;
+}
+
+async function checkMcpExtensions(deps: DoctorDeps): Promise<CheckResult> {
+  // Warn-only: an unwired extension loses its tools but memory itself still works.
+  const name = 'mcp extensions';
+  const problems = extensionWiringProblems(deps.mcpExtensions?.() ?? null, deps.installedVersion);
+  if (problems.length > 0) return { name, ok: false, required: false, detail: problems.join('; ') };
+  return { name, ok: true, required: false, detail: 'MCP extensions consistent with installed packages' };
 }
 
 async function checkGate(deps: DoctorDeps): Promise<CheckResult> {
@@ -157,6 +209,7 @@ export async function runDoctorChecks(deps: DoctorDeps): Promise<{ results: Chec
     checkEmbedder(deps),
     checkMigrations(deps),
     checkSchedulerHeartbeat(deps),
+    checkMcpExtensions(deps),
   ]);
   const ok = results.every((r) => r.ok || !r.required);
   return { results, ok };
@@ -188,6 +241,7 @@ export function defaultDoctorDeps(): DoctorDeps {
       }
     },
     now: () => new Date().toISOString(),
+    mcpExtensions: () => readMcpExtensions(),
   };
 }
 

@@ -95,6 +95,38 @@ describe('buildMcpConfig', () => {
     const mem = cfg.mcpServers['fortytwo-memory'] as { env: Record<string, string> };
     expect(mem.env.OLLAMA_BASE_URL).toBe('http://localhost:11434');
   });
+
+  it('keeps the plain npx args and omits the extensions key when none are given', () => {
+    for (const extensions of [undefined, []]) {
+      const cfg = buildMcpConfig(null, { dbPath: 'db/fortytwo.db', extensions });
+      const mem = cfg.mcpServers['fortytwo-memory'] as { args: string[]; env: Record<string, string> };
+      expect(mem.args).toEqual(['-y', '@justfortytwo/memory']);
+      expect('FORTYTWO_MCP_EXTENSIONS' in mem.env).toBe(false);
+    }
+  });
+
+  it('sets FORTYTWO_MCP_EXTENSIONS and co-installs the extensions under one npx prefix', () => {
+    const cfg = buildMcpConfig(
+      { mcpServers: { other: { command: 'x' } } },
+      { dbPath: 'db/fortytwo.db', extensions: ['@justfortytwo/transcript', '@acme/more'] },
+    );
+    const mem = cfg.mcpServers['fortytwo-memory'] as { command: string; args: string[]; env: Record<string, string> };
+    expect(mem.env.FORTYTWO_MCP_EXTENSIONS).toBe('@justfortytwo/transcript,@acme/more');
+    expect(mem.env.DB_PATH).toBe('db/fortytwo.db');
+    expect(mem.command).toBe('npx');
+    expect(mem.args).toEqual([
+      '-y', '-p', '@justfortytwo/memory', '-p', '@justfortytwo/transcript', '-p', '@acme/more', 'fortytwo-memory',
+    ]);
+    expect(cfg.mcpServers.other).toEqual({ command: 'x' });
+  });
+
+  it('drops a stale extensions key when re-run without extensions', () => {
+    const first = buildMcpConfig(null, { dbPath: 'd', extensions: ['@justfortytwo/transcript'] });
+    const again = buildMcpConfig(first, { dbPath: 'd' });
+    const mem = again.mcpServers['fortytwo-memory'] as { args: string[]; env: Record<string, string> };
+    expect('FORTYTWO_MCP_EXTENSIONS' in mem.env).toBe(false);
+    expect(mem.args).toEqual(['-y', '@justfortytwo/memory']);
+  });
 });
 
 // Scripted readline: answers are consumed in order; records every prompt shown.
@@ -386,6 +418,11 @@ describe('declared engine compat', () => {
     expect(compat['@justfortytwo/telegram']).toBe('1.0.0-7');
     expect(engineInstallSpecs(compat, () => false)).toContain('@justfortytwo/telegram@1.0.0-7');
     expect(Object.keys(compat)).not.toContain('@justfortytwo/runner');
+  });
+  it('declares @justfortytwo/transcript (^1.0.0-0) so init installs and wires it', () => {
+    const compat = readSelfCompatRanges();
+    expect(compat['@justfortytwo/transcript']).toBe('^1.0.0-0');
+    expect(engineInstallSpecs(compat, () => false)).toContain('@justfortytwo/transcript@^1.0.0-0');
   });
   it('pins scheduler with the internal Oneiros handler', () => {
     expect(readSelfCompatRanges()['@justfortytwo/scheduler']).toBe('1.0.0-3');
