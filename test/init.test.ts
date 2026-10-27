@@ -431,25 +431,25 @@ describe('declared engine compat', () => {
     // engineInstallSpecs over the real compat (nothing present) must offer scheduler.
     expect(engineInstallSpecs(compat, () => false)).toContain(`@justfortytwo/scheduler@${compat['@justfortytwo/scheduler']}`);
   });
-  it('pins telegram to the exact 1.0.0-8 pre-release; runner stays transitive', () => {
+  it('pins telegram to the exact 1.0.0 release; runner stays transitive', () => {
     const compat = readSelfCompatRanges();
-    expect(compat['@justfortytwo/telegram']).toBe('1.0.0-8');
-    expect(engineInstallSpecs(compat, () => false)).toContain('@justfortytwo/telegram@1.0.0-8');
+    expect(compat['@justfortytwo/telegram']).toBe('1.0.0');
+    expect(engineInstallSpecs(compat, () => false)).toContain('@justfortytwo/telegram@1.0.0');
     expect(Object.keys(compat)).not.toContain('@justfortytwo/runner');
   });
-  it('declares @justfortytwo/transcript (^1.0.0-0) so init installs and wires it', () => {
+  it('declares @justfortytwo/transcript (^1.0.0) so init installs and wires it', () => {
     const compat = readSelfCompatRanges();
-    expect(compat['@justfortytwo/transcript']).toBe('^1.0.0-0');
-    expect(engineInstallSpecs(compat, () => false)).toContain('@justfortytwo/transcript@^1.0.0-0');
+    expect(compat['@justfortytwo/transcript']).toBe('^1.0.0');
+    expect(engineInstallSpecs(compat, () => false)).toContain('@justfortytwo/transcript@^1.0.0');
   });
   it('pins scheduler with the internal Oneiros handler', () => {
-    expect(readSelfCompatRanges()['@justfortytwo/scheduler']).toBe('1.0.0-4');
+    expect(readSelfCompatRanges()['@justfortytwo/scheduler']).toBe('1.0.0');
   });
-  it('pins memory to the exact Oneiros cursor pre-release (a caret on 0.1.x would never select it)', () => {
-    expect(readSelfCompatRanges()['@justfortytwo/memory']).toBe('1.0.0-3');
+  it('pins memory to the exact 1.0.0 release with the Oneiros cursor', () => {
+    expect(readSelfCompatRanges()['@justfortytwo/memory']).toBe('1.0.0');
   });
-  it('pins persona to the exact Oneiros pre-release (a caret would never select it)', () => {
-    expect(readSelfCompatRanges()['@justfortytwo/persona']).toBe('1.0.0-3');
+  it('pins persona to the exact 1.0.0 release with Oneiros', () => {
+    expect(readSelfCompatRanges()['@justfortytwo/persona']).toBe('1.0.0');
   });
   it('keeps fortytwo.compat the only engine version list (no deps/peerDeps on @justfortytwo/*)', () => {
     const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as Record<
