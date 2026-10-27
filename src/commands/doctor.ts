@@ -63,39 +63,60 @@ export interface DoctorDeps {
 export interface McpExtensionState {
   memoryEntry: boolean;
   extensions: string[];
+  /** The entry's launch args, when it has an args array. */
+  args?: string[];
 }
 
 const TRANSCRIPT_PKG = '@justfortytwo/transcript';
+const MEMORY_PKG = '@justfortytwo/memory';
 
 /** Read FORTYTWO_MCP_EXTENSIONS off the `fortytwo-memory` entry; null if .mcp.json is missing/unreadable. */
 export function readMcpExtensions(root: string = process.cwd()): McpExtensionState | null {
   try {
     const cfg = JSON.parse(readFileSync(join(root, '.mcp.json'), 'utf8')) as {
-      mcpServers?: Record<string, { env?: Record<string, unknown> } | undefined>;
+      mcpServers?: Record<string, { env?: Record<string, unknown>; args?: unknown } | undefined>;
     };
     const entry = cfg.mcpServers?.['fortytwo-memory'];
     if (!entry) return { memoryEntry: false, extensions: [] };
     const raw = entry.env?.FORTYTWO_MCP_EXTENSIONS;
     const extensions = typeof raw === 'string' ? raw.split(',').map((x) => x.trim()).filter(Boolean) : [];
-    return { memoryEntry: true, extensions };
+    const args = Array.isArray(entry.args) ? entry.args.map(String) : undefined;
+    return { memoryEntry: true, extensions, ...(args ? { args } : {}) };
   } catch {
     return null;
   }
 }
 
-/** Mismatches between installed extension packages and the .mcp.json env var (pure). */
+/** True when `args` passes `-p <pkg>` to npx. */
+function hasPackageArg(args: string[], pkg: string): boolean {
+  return args.some((a, i) => a === '-p' && args[i + 1] === pkg);
+}
+
+/**
+ * Mismatches between installed extension packages, this CLI's compat contract
+ * and the .mcp.json memory entry (pure; every problem is warn-only).
+ * `compatRanges` given: also flag a declared transcript that is not installed
+ * while memory is (chat then goes nowhere).
+ */
 export function extensionWiringProblems(
   state: McpExtensionState | null,
   installedVersion: (spec: string) => string | null,
+  compatRanges: Record<string, string> = {},
 ): string[] {
-  if (!state?.memoryEntry) return [];
   const problems: string[] = [];
+  if (TRANSCRIPT_PKG in compatRanges && installedVersion(MEMORY_PKG) !== null && installedVersion(TRANSCRIPT_PKG) === null) {
+    problems.push(`${TRANSCRIPT_PKG} is declared by this CLI but not installed: chat is not being recorded (run \`fortytwo update\` or \`fortytwo init\`)`);
+  }
+  if (!state?.memoryEntry) return problems;
   if (installedVersion(TRANSCRIPT_PKG) !== null && !state.extensions.includes(TRANSCRIPT_PKG)) {
     problems.push(`${TRANSCRIPT_PKG} is installed but not listed in FORTYTWO_MCP_EXTENSIONS in .mcp.json (re-run \`fortytwo init\` to wire it)`);
   }
   for (const ext of state.extensions) {
     if (installedVersion(ext) === null) {
       problems.push(`FORTYTWO_MCP_EXTENSIONS names ${ext}, which is not installed (npm install ${ext})`);
+    }
+    if (state.args && !hasPackageArg(state.args, ext)) {
+      problems.push(`FORTYTWO_MCP_EXTENSIONS names ${ext}, but the fortytwo-memory args lack \`-p ${ext}\`, so npx cannot load it (re-run \`fortytwo init\` to re-wire)`);
     }
   }
   return problems;
@@ -104,7 +125,7 @@ export function extensionWiringProblems(
 async function checkMcpExtensions(deps: DoctorDeps): Promise<CheckResult> {
   // Warn-only: an unwired extension loses its tools but memory itself still works.
   const name = 'mcp extensions';
-  const problems = extensionWiringProblems(deps.mcpExtensions?.() ?? null, deps.installedVersion);
+  const problems = extensionWiringProblems(deps.mcpExtensions?.() ?? null, deps.installedVersion, deps.compatRanges);
   if (problems.length > 0) return { name, ok: false, required: false, detail: problems.join('; ') };
   return { name, ok: true, required: false, detail: 'MCP extensions consistent with installed packages' };
 }

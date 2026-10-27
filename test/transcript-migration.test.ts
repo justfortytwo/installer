@@ -239,6 +239,41 @@ describe('update reconciliation (reconcileRuntime)', () => {
     expect(mem.env).toMatchObject({ DB_PATH: DB, OLLAMA_BASE_URL: 'http://ollama.lan:11434', FORTYTWO_MCP_EXTENSIONS: '@justfortytwo/transcript' });
   });
 
+  it('keeps a hand-edited remote embedder config (openai) through the re-wire', async () => {
+    const { root } = await fixture();
+    const env = { DB_PATH: DB, EMBED_PROVIDER: 'openai', EMBED_API_KEY: 'sk-test', EMBED_MODEL: 'text-embedding-3-large', EMBED_BASE_URL: 'https://api.example.com/v1' };
+    writeFileSync(join(root, '.mcp.json'), JSON.stringify({ mcpServers: { 'fortytwo-memory': { command: 'npx', args: ['-y', '@justfortytwo/memory'], env } } }));
+    await reconcileRuntime(root);
+    const mem = mcp(root).mcpServers['fortytwo-memory'];
+    expect(mem.env).toMatchObject(env);
+    expect(mem.env.FORTYTWO_MCP_EXTENSIONS).toBe('@justfortytwo/transcript');
+  });
+
+  it('reports a failed chat migration (malformed row) instead of throwing; memory stays intact', async () => {
+    const { root } = await fixture();
+    writeOldMcp(root);
+    let db = await open(root);
+    try {
+      db.h.raw.prepare("UPDATE memories SET meta = '{broken' WHERE source = 'telegram:owner'").run();
+    } finally { await db.close(); }
+    db = await open(root);
+    const before = db.h.raw.prepare('SELECT * FROM memories ORDER BY id').all();
+    await db.close();
+    const result = await reconcileRuntime(root);
+    expect(result).toMatchObject({ moved: 0, skipped: true });
+    expect(result.error).toMatch(/meta is not valid JSON/);
+    expect(mcp(root).mcpServers['fortytwo-memory'].env.FORTYTWO_MCP_EXTENSIONS).toBe('@justfortytwo/transcript');
+    db = await open(root);
+    try { expect(db.h.raw.prepare('SELECT * FROM memories ORDER BY id').all()).toEqual(before); } finally { await db.close(); }
+  });
+
+  it('refuses to overwrite a malformed .mcp.json and leaves it untouched', async () => {
+    const { root } = await fixture();
+    writeFileSync(join(root, '.mcp.json'), '{ "mcpServers": ');
+    await expect(reconcileRuntime(root)).rejects.toThrow(/\.mcp\.json.*not valid JSON/);
+    expect(readFileSync(join(root, '.mcp.json'), 'utf8')).toBe('{ "mcpServers": ');
+  });
+
   it('without the transcript package: wires plain memory and skips the migration', async () => {
     const { root, before } = await fixture();
     writeOldMcp(root);

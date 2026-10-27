@@ -287,3 +287,80 @@ describe('externally invoked installer bootstrap', () => {
     expect(await performUpdate(deps, {})).toBe(1); expect(events).toEqual([]);
   });
 });
+
+describe('update installs newly declared memory companions (transcript)', () => {
+  const MEM = '@justfortytwo/memory', TR = '@justfortytwo/transcript', GATE = '@justfortytwo/gate';
+  const compat = { [MEM]: '^0.1.1', [TR]: '^1.0.0-0', [GATE]: '^0.1.0' };
+
+  it('adds transcript to the target set when memory is installed, even with memory already latest', async () => {
+    const { deps, rec } = fakeUpdateDeps({
+      compatRanges: compat,
+      installed: { [MEM]: '0.1.3', [GATE]: '0.1.0' },
+      published: { [MEM]: ['0.1.3'], [TR]: ['1.0.0-0', '1.0.0-1'], [GATE]: ['0.1.0'] },
+    });
+    expect(await performUpdate(deps, {})).toBe(0);
+    expect(rec.installed).toEqual([[`${MEM}@0.1.3`, `${TR}@1.0.0-1`, `${GATE}@0.1.0`]]);
+    expect(rec.recorded[0]!.map((p) => p.name)).toContain(TR);
+    expect(rec.out).toMatch(/@justfortytwo\/transcript: 1\.0\.0-1 \(new\)/);
+    expect(rec.rendered).toBe(1);
+  });
+
+  it('dry-run reports transcript as new without installing it', async () => {
+    const { deps, rec } = fakeUpdateDeps({
+      compatRanges: compat,
+      installed: { [MEM]: '0.1.3' },
+      published: { [MEM]: ['0.1.3'], [TR]: ['1.0.0-0'] },
+    });
+    expect(await performUpdate(deps, { dryRun: true })).toBe(0);
+    expect(rec.installed).toEqual([]);
+    expect(rec.out).toMatch(/transcript: 1\.0\.0-0 \(new\)/);
+  });
+
+  it('does not pull transcript when memory is not installed, nor other absent siblings', async () => {
+    const { deps, rec } = fakeUpdateDeps({
+      compatRanges: compat,
+      installed: { [GATE]: '0.1.0' },
+      published: { [GATE]: ['0.1.0'], [TR]: ['1.0.0-0'], [MEM]: ['0.1.3'] },
+    });
+    expect(await performUpdate(deps, {})).toBe(0);
+    expect(rec.installed).toEqual([]);
+    expect(rec.out).toMatch(/already at the latest/);
+  });
+});
+
+describe('update prints doctor results that reflect the reconciled state', () => {
+  it('runs doctor again after reconcile and prints only the post-reconcile results', async () => {
+    const { deps, rec } = fakeUpdateDeps({
+      compatRanges: COMPAT,
+      installed: { '@justfortytwo/memory': '0.1.2' },
+      published: { '@justfortytwo/memory': ['0.1.3'] },
+    });
+    const stale: CheckResult = { name: 'mcp extensions', ok: false, required: false, detail: 'stale-unwired-warning' };
+    const fresh: CheckResult = { name: 'mcp extensions', ok: true, required: false, detail: 'wired-after-reconcile' };
+    deps.doctor = async () => ({ results: [okCheck, rec.rendered === 0 ? stale : fresh], ok: true });
+    expect(await performUpdate(deps, {})).toBe(0);
+    expect(rec.out).not.toContain('stale-unwired-warning');
+    expect(rec.out).toContain('wired-after-reconcile');
+    expect(rec.rendered).toBe(1);
+  });
+});
+
+describe('update preflight (.mcp.json must parse)', () => {
+  it('stops before persisting, resolving or installing anything when preflight reports an error', async () => {
+    const { deps, rec } = fakeUpdateDeps({
+      compatRanges: COMPAT,
+      installed: { '@justfortytwo/memory': '0.1.2' },
+      published: { '@justfortytwo/memory': ['0.1.3'] },
+    });
+    const events: string[] = [];
+    deps.runningInstallerVersion = () => '1.0.0-10';
+    deps.persistInstaller = () => { events.push('persist'); return { ok: true, detail: '' }; };
+    deps.preflight = () => '.mcp.json is not valid JSON (Unexpected token)';
+    expect(await performUpdate(deps, {})).toBe(1);
+    expect(events).toEqual([]);
+    expect(rec.installed).toEqual([]);
+    expect(rec.recorded).toEqual([]);
+    expect(rec.rendered).toBe(0);
+    expect(rec.err).toContain('.mcp.json is not valid JSON');
+  });
+});

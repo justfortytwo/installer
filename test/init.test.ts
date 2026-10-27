@@ -120,6 +120,24 @@ describe('buildMcpConfig', () => {
     expect(cfg.mcpServers.other).toEqual({ command: 'x' });
   });
 
+  it('preserves user-set env on the existing memory entry; overrides only DB_PATH and extensions', () => {
+    const existing = { mcpServers: { 'fortytwo-memory': { command: 'npx', args: ['-y', '@justfortytwo/memory'], env: {
+      DB_PATH: 'old.db', EMBED_PROVIDER: 'openai', EMBED_API_KEY: 'sk-x', EMBED_MODEL: 'text-embedding-3-large',
+      OLLAMA_BASE_URL: 'http://ollama.lan:11434', CUSTOM_FLAG: '1', FORTYTWO_MCP_EXTENSIONS: '@acme/old',
+    } } } };
+    const cfg = buildMcpConfig(existing, { dbPath: 'db/new.db', extensions: ['@justfortytwo/transcript'] });
+    const mem = cfg.mcpServers['fortytwo-memory'] as { env: Record<string, string> };
+    expect(mem.env).toEqual({
+      DB_PATH: 'db/new.db', EMBED_PROVIDER: 'openai', EMBED_API_KEY: 'sk-x', EMBED_MODEL: 'text-embedding-3-large',
+      OLLAMA_BASE_URL: 'http://ollama.lan:11434', CUSTOM_FLAG: '1', FORTYTWO_MCP_EXTENSIONS: '@justfortytwo/transcript',
+    });
+    const plain = buildMcpConfig(existing, { dbPath: 'db/new.db', ollamaBaseUrl: 'http://other:11434' });
+    const env2 = (plain.mcpServers['fortytwo-memory'] as { env: Record<string, string> }).env;
+    expect(env2.OLLAMA_BASE_URL).toBe('http://other:11434');
+    expect(env2.EMBED_MODEL).toBe('text-embedding-3-large');
+    expect('FORTYTWO_MCP_EXTENSIONS' in env2).toBe(false);
+  });
+
   it('drops a stale extensions key when re-run without extensions', () => {
     const first = buildMcpConfig(null, { dbPath: 'd', extensions: ['@justfortytwo/transcript'] });
     const again = buildMcpConfig(first, { dbPath: 'd' });

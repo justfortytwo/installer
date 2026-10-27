@@ -48,8 +48,8 @@ To remove it: delete the launcher (`init` prints its path) and, per project,
 
 You only install **this** package — `init` installs the engine packages it needs
 on demand (`@justfortytwo/gate`, `/memory`, `/persona`, `/telegram`, `/scheduler`, `/transcript`).
-During the 1.0 pre-release, `/telegram`, `/scheduler` and `/persona` are pinned
-to exact pre-release versions (see `fortytwo.compat` in `package.json`); telegram
+During the 1.0 pre-release, `/memory`, `/telegram`, `/scheduler` and `/persona`
+are pinned to exact pre-release versions (see `fortytwo.compat` in `package.json`); telegram
 and scheduler pull in `@justfortytwo/runner` themselves, so the installer never
 installs runner directly. Engine versions live only in `package.json`
 `fortytwo.compat` (not in `peerDependencies`), so upgrading the installer never
@@ -57,7 +57,7 @@ trips npm's peer resolution. Pass
 `--no-install` to manage them yourself, and `--yes` (with `--answers <file.json>`
 or `FORTYTWO_*` env) for non-interactive installs. Point the memory engine at a
 remote embedder with `--ollama-base-url https://host` (threaded into `.mcp.json`,
-so the memory MCP server uses it — see [The embedder](#the-embedder)). When `@justfortytwo/transcript` is installed, `init` also lists it in `FORTYTWO_MCP_EXTENSIONS` on that `.mcp.json` entry (launching memory with `npx -y -p @justfortytwo/memory -p @justfortytwo/transcript fortytwo-memory` so both share one install), and `status`/`doctor` warn if the package and the env var disagree. Pre-seed the optional Telegram channel
+so the memory MCP server uses it — see [The embedder](#the-embedder)). When `@justfortytwo/transcript` is installed, `init` also lists it in `FORTYTWO_MCP_EXTENSIONS` on that `.mcp.json` entry (launching memory with `npx -y -p @justfortytwo/memory -p @justfortytwo/transcript fortytwo-memory` so both share one install), and `status`/`doctor` warn if the package, the env var and the `-p` launch args disagree, or if memory is installed without the declared transcript (chat is then not recorded). Re-wiring keeps the entry's other env (a hand-set `EMBED_PROVIDER`/`EMBED_API_KEY`/`EMBED_MODEL` survives `init` and `update`); a `.mcp.json` that does not parse is reported and left untouched. Pre-seed the optional Telegram channel
 with `--telegram-bot-token <token>` / `--allowed-chat-ids <ids>` (or the matching
 env vars) — secrets are written to the gitignored `.env`, never prompted.
 
@@ -90,7 +90,7 @@ gitignored `.fortytwo/identity.json`; neither is ever committed.
 | `init`     | Install any missing engine packages, pin this CLI into the project and install the `fortytwo` launcher (see [The `fortytwo` command](#the-fortytwo-command)), then capture your assistant's name + owner details (interactive, or via flags/env for CI). Writes `.fortytwo/identity.json`, secrets + `ALLOWED_CHAT_IDS` to `.env`, wires `.mcp.json`, renders the persona, provisions local infra (pulls the embedder model, migrates the memory DB), and records the installed version set. |
 | `pair`     | Issue a one-time `/login` pairing code, persisted to the bridge's bindings db so the running bridge can redeem it (the dynamic counterpart to the static `ALLOWED_CHAT_IDS` allowlist). Refuses, and tells you to run `fortytwo start`, when Telegram isn't running; `--force` issues a code anyway (for a bridge you run yourself). |
 | `doctor`   | Health-check the engine: check Gate package compatibility (`POLICY_SCHEMA_VERSION`) and memory's `MEMORY_TOOL_CONTRACT_VERSION` match what this CLI expects, confirm the memory DB is migrated, cross-check installed sibling versions against the declared compatibility ranges, and check the embedder model is pulled (warn-only). |
-| `update`   | Resolve the latest in-range version of each **installed** engine package, install it, rotate the rollback baseline, then run `doctor` to verify. `--dry-run` reports the resolved set without installing. |
+| `update`   | Resolve the latest in-range version of each **installed** engine package (plus `@justfortytwo/transcript` when memory is installed and it is missing), install it, rotate the rollback baseline, then run `doctor` to verify. `--dry-run` reports the resolved set without installing. |
 | `rollback` | Re-install the previous version set recorded before the last `update`, then run `doctor`. Manual by design — never auto-triggered, so you can inspect a bad upgrade first. |
 | `enrich`   | Capture more answers to deepen the persona, then re-render (no clobber). |
 | `forget`   | Permanently delete memories selected by `--id` / `--query` (semantic) / `--tag` / `--source` / `--since`/`--until` — previewed and confirmed (or `--yes`). Owner-only: it deletes via a library API, never exposed to the assistant. |

@@ -11,7 +11,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { liveRuntime, serviceRunning, type RuntimeState } from '../runtime.js';
 import { defaultDoctorDeps, extensionWiringProblems, readMcpExtensions, HEARTBEAT_STALE_MS } from './doctor.js';
-import { readInstalledVersion } from '../engine.js';
+import { readInstalledVersion, readSelfCompatRanges } from '../engine.js';
 
 export interface StatusInput {
   runtime: RuntimeState | null;
@@ -62,7 +62,7 @@ export async function runStatus(_argv: string[]): Promise<number> {
     runtime,
     schedulerHeartbeat: defaultDoctorDeps().schedulerHeartbeat(),
     memoryConfigured: memoryConfigured(root),
-    extensionProblems: extensionWiringProblems(readMcpExtensions(root), (s) => readInstalledVersion(s, root)),
+    extensionProblems: extensionWiringProblems(readMcpExtensions(root), (s) => readInstalledVersion(s, root), readSelfCompatRanges()),
     nowMs: Date.now(),
   });
   process.stdout.write(lines.join('\n') + '\n');

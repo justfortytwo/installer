@@ -88,3 +88,66 @@ describe('doctor MCP extension check', () => {
     expect(r).toMatchObject({ ok: true });
   });
 });
+
+describe('declared-but-absent transcript (chat not recorded)', () => {
+  const MEM = '@justfortytwo/memory';
+  const compat = { [MEM]: '1.0.0-3', [TRANSCRIPT]: '^1.0.0-0' };
+
+  it('warns when compat declares transcript, memory is installed and transcript is not', () => {
+    const p = extensionWiringProblems({ memoryEntry: true, extensions: [] }, installed(MEM), compat);
+    expect(p).toHaveLength(1);
+    expect(p[0]).toMatch(/chat is not being recorded/);
+    expect(p[0]).toMatch(/fortytwo update/);
+  });
+  it('warns even without a .mcp.json memory entry', () => {
+    expect(extensionWiringProblems(null, installed(MEM), compat)).toHaveLength(1);
+  });
+  it('is silent when transcript is installed, memory is absent, or compat does not declare it', () => {
+    expect(extensionWiringProblems({ memoryEntry: true, extensions: [TRANSCRIPT], args: ['-y', '-p', MEM, '-p', TRANSCRIPT, 'fortytwo-memory'] }, installed(MEM, TRANSCRIPT), compat)).toEqual([]);
+    expect(extensionWiringProblems(null, installed(), compat)).toEqual([]);
+    expect(extensionWiringProblems(null, installed(MEM), { [MEM]: '1.0.0-3' })).toEqual([]);
+  });
+  it('doctor warns but keeps the aggregate ok', async () => {
+    const d: DoctorDeps = {
+      loadGate: async () => ({ POLICY_SCHEMA_VERSION: 1 }),
+      loadMemory: async () => ({ MEMORY_TOOL_CONTRACT_VERSION: 1 }),
+      installedVersion: (s) => (s === MEM ? '1.0.0-3' : null),
+      compatRanges: compat,
+      ollamaModels: async () => ['m'],
+      embedModel: 'm',
+      migrationState: async () => 'ok',
+      schedulerHeartbeat: () => ({ pid: 1, ts: '2026-06-30T12:00:00.000Z' }),
+      now: () => '2026-06-30T12:00:10.000Z',
+    };
+    const { results, ok } = await runDoctorChecks(d);
+    const r = results.find((x) => x.name === 'mcp extensions');
+    expect(r).toMatchObject({ ok: false, required: false });
+    expect(r!.detail).toMatch(/chat is not being recorded/);
+    expect(ok).toBe(true);
+  });
+});
+
+describe('extension launch args (-p <ext>)', () => {
+  it('warns when an env-listed extension is missing from the npx -p args', () => {
+    const p = extensionWiringProblems(
+      { memoryEntry: true, extensions: [TRANSCRIPT], args: ['-y', '@justfortytwo/memory'] },
+      installed(TRANSCRIPT),
+    );
+    expect(p).toHaveLength(1);
+    expect(p[0]).toMatch(/-p @justfortytwo\/transcript/);
+  });
+  it('is clean when every extension has its -p', () => {
+    expect(extensionWiringProblems(
+      { memoryEntry: true, extensions: [TRANSCRIPT], args: ['-y', '-p', '@justfortytwo/memory', '-p', TRANSCRIPT, 'fortytwo-memory'] },
+      installed(TRANSCRIPT),
+    )).toEqual([]);
+  });
+  it('readMcpExtensions returns the entry args', () => {
+    const root = mkdtempSync(join(tmpdir(), 'ft-mcp-'));
+    try {
+      const args = ['-y', '-p', '@justfortytwo/memory', '-p', TRANSCRIPT, 'fortytwo-memory'];
+      writeFileSync(join(root, '.mcp.json'), JSON.stringify({ mcpServers: { 'fortytwo-memory': { args, env: { FORTYTWO_MCP_EXTENSIONS: TRANSCRIPT } } } }));
+      expect(readMcpExtensions(root)).toEqual({ memoryEntry: true, extensions: [TRANSCRIPT], args });
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+});

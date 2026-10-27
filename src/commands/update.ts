@@ -3,13 +3,16 @@
 // Distribution policy: "semver ranges, latest-compatible". There is NO curated
 // bill-of-materials. update:
 //   1. RESOLVE latest-in-range for every installed @justfortytwo/* sibling
-//      (the ranges in this CLI's fortytwo.compat).
+//      (the ranges in this CLI's fortytwo.compat), plus any memory companion
+//      (transcript) this CLI declares but the project lacks, when memory is
+//      installed — otherwise chat would silently stop being recorded.
 //   2. INSTALL that set (npm).
 //   3. ROTATE the ledger (state.json: previous := the pre-update set) the moment
 //      the install lands, so rollback always targets the set that was running.
 //   4. POST-VERIFY with doctor. On failure: leave the new set in place but LOUDLY
 //      point at `fortytwo rollback` — rollback is MANUAL by design (never auto-
-//      revert, so the user can inspect first). On success: reconcile machine-owned runtime assets only.
+//      revert, so the user can inspect first). On success: reconcile machine-owned
+//      runtime assets only, then print doctor's view of the reconciled project.
 //      Existing context is never re-rendered by update.
 //
 // rollback re-installs state.json's `previous` set and rotates the ledger back.
@@ -17,8 +20,6 @@
 // injected `*Deps` (so no test touches the network or the real npm).
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { isPidAlive, liveRuntime } from '../runtime.js';
 import { HEARTBEAT_STALE_MS } from './doctor.js';
 import {
@@ -28,10 +29,19 @@ import {
 import { compareSemver, readInstalledVersion, readSelfCompatRanges, readSelfVersion, satisfiesRange } from '../engine.js';
 import { runDoctorChecks, defaultDoctorDeps, type CheckResult } from './doctor.js';
 import { reconcileOneiros } from '../oneiros.js';
-import { migrateChatToTranscript, type MigrationResult } from '../transcript-migration.js';
+import { migrateChatSafely, type MigrationResult } from '../transcript-migration.js';
 import {
-  readProjectSetting, writeMcpJson, DEFAULT_DB_PATH, DEFAULT_OLLAMA_BASE_URL, CLI_PACKAGE, cliInstallSpec,
+  readProjectSetting, readMcpJson, writeMcpJson, DEFAULT_DB_PATH, DEFAULT_OLLAMA_BASE_URL, CLI_PACKAGE, cliInstallSpec,
+  TRANSCRIPT_PACKAGE,
 } from './init.js';
+
+const MEMORY_PACKAGE = '@justfortytwo/memory';
+/**
+ * Siblings that extend memory: when memory is installed and this CLI declares
+ * one the project lacks, update installs it (it is new to the contract, not a
+ * sibling the user chose to omit).
+ */
+export const MEMORY_COMPANIONS: readonly string[] = [TRANSCRIPT_PACKAGE];
 
 // --- pure: pick the latest published version satisfying a range ---
 
@@ -75,6 +85,8 @@ export interface UpdateDeps {
   persistInstaller?: (exactSpec: string) => InstallResult;
   readState: () => InstallState | null;
   runtimeActive?: () => boolean;
+  /** Pre-change sanity check (e.g. .mcp.json parses); a message aborts before anything changes. */
+  preflight?: () => string | null;
   installedVersion: (spec: string) => string | null;
   /** spec -> declared semver range (this CLI's fortytwo.compat). */
   compatRanges: Record<string, string>;
@@ -119,6 +131,12 @@ export async function performUpdate(deps: UpdateDeps, flags: { dryRun?: boolean 
     return 1;
   }
 
+  const blocked = deps.preflight?.();
+  if (blocked) {
+    deps.err(`update: ${blocked}\nNothing was installed or recorded.\n`);
+    return 1;
+  }
+
   if (deps.runningInstallerVersion) {
     const running = deps.runningInstallerVersion();
     const installed = deps.installedVersion(CLI_PACKAGE);
@@ -145,11 +163,17 @@ export async function performUpdate(deps: UpdateDeps, flags: { dryRun?: boolean 
 
   // The engine = the declared compat siblings that are CURRENTLY installed. We
   // upgrade what's there; we don't pull in siblings the user deliberately omitted.
+  // Exception: memory companions (transcript) join the set whenever memory is
+  // installed, so an update onto a CLI that declares them actually installs them.
+  const memoryInstalled = deps.installedVersion(MEMORY_PACKAGE) !== null;
   const ranges: Record<string, string> = {};
   const current: VersionPin[] = [];
   for (const [name, range] of Object.entries(deps.compatRanges)) {
     const resolved = deps.installedVersion(name);
-    if (resolved === null) continue;
+    if (resolved === null) {
+      if (memoryInstalled && MEMORY_COMPANIONS.includes(name)) ranges[name] = range;
+      continue;
+    }
     ranges[name] = range;
     current.push({ name, range, resolved });
   }
@@ -176,7 +200,8 @@ export async function performUpdate(deps: UpdateDeps, flags: { dryRun?: boolean 
     'update: resolving latest-in-range →\n' +
     target.map((t) => {
       const from = versionOf(current, t.name);
-      return `  ${t.name}: ${from && from !== t.resolved ? `${from} → ${t.resolved}` : `${t.resolved} (unchanged)`}`;
+      if (!from) return `  ${t.name}: ${t.resolved} (new)`;
+      return `  ${t.name}: ${from !== t.resolved ? `${from} → ${t.resolved}` : `${t.resolved} (unchanged)`}`;
     }).join('\n') + '\n',
   );
 
@@ -196,14 +221,24 @@ export async function performUpdate(deps: UpdateDeps, flags: { dryRun?: boolean 
   // Install landed → rotate the ledger so `previous` = the pre-update set.
   deps.record(target);
 
-  const { results, ok } = await deps.doctor();
-  printChecks(results, deps.out);
-  if (!ok) {
-    deps.err('\nupdate: installed, but doctor reports required checks FAILED. Inspect, then run `fortytwo rollback` to restore the previous set.\n');
+  const failed = '\nupdate: installed, but doctor reports required checks FAILED. Inspect, then run `fortytwo rollback` to restore the previous set.\n';
+  const pre = await deps.doctor();
+  if (!pre.ok) {
+    printChecks(pre.results, deps.out);
+    deps.err(failed);
     return 1;
   }
 
+  // Reconcile (re-wire .mcp.json, oneiros, chat migration), then report doctor's
+  // view of the RECONCILED project: the pre-reconcile run would still flag the
+  // extension wiring that reconcile just fixed.
   await deps.reconcile();
+  const { results, ok } = await deps.doctor();
+  printChecks(results, deps.out);
+  if (!ok) {
+    deps.err(failed);
+    return 1;
+  }
   deps.out('\nupdate: healthy — engine upgraded. Start services with `fortytwo start` (or your service manager).\n');
   return 0;
 }
@@ -238,12 +273,9 @@ export async function performRollback(deps: RollbackDeps): Promise<number> {
 
 /** The Ollama URL the memory server runs with now (its .mcp.json env), else .env, else the default. */
 function currentOllamaBaseUrl(root: string): string {
-  const path = join(root, '.mcp.json');
-  if (existsSync(path)) {
-    const cfg = JSON.parse(readFileSync(path, 'utf8')) as { mcpServers?: Record<string, { env?: Record<string, unknown> }> };
-    const url = cfg.mcpServers?.['fortytwo-memory']?.env?.OLLAMA_BASE_URL;
-    if (typeof url === 'string' && url.trim()) return url;
-  }
+  const cfg = readMcpJson(root) as { mcpServers?: Record<string, { env?: Record<string, unknown> } | undefined> } | null;
+  const url = cfg?.mcpServers?.['fortytwo-memory']?.env?.OLLAMA_BASE_URL;
+  if (typeof url === 'string' && url.trim()) return url;
   return readProjectSetting('OLLAMA_BASE_URL', root) ?? DEFAULT_OLLAMA_BASE_URL;
 }
 
@@ -256,7 +288,9 @@ export async function reconcileRuntime(root: string): Promise<MigrationResult> {
   const dbPath = readProjectSetting('DB_PATH', root) ?? DEFAULT_DB_PATH;
   writeMcpJson(root, dbPath, currentOllamaBaseUrl(root));
   await reconcileOneiros(root, dbPath);
-  return migrateChatToTranscript(root, dbPath);
+  // A failed migration (malformed row, SQLITE_BUSY) is reported, never fatal:
+  // memory stays intact and a later init/update retries it.
+  return migrateChatSafely(root, dbPath);
 }
 
 /** Published versions of a package via `npm view`; [] if unknown/unreachable. */
@@ -289,6 +323,9 @@ export async function runUpdate(argv: string[]): Promise<number> {
     runningInstallerVersion: readSelfVersion,
     persistInstaller: (spec) => npmInstall([spec], root, ['--save-exact']),
     readState: () => readState(root),
+    preflight: () => {
+      try { readMcpJson(root); return null; } catch (err) { return (err as Error).message; }
+    },
     runtimeActive: () => {
       if (liveRuntime(root)) return true;
       const heartbeat = defaultDoctorDeps().schedulerHeartbeat();
@@ -301,8 +338,9 @@ export async function runUpdate(argv: string[]): Promise<number> {
     doctor: () => runDoctorChecks(defaultDoctorDeps()),
     record: (pins) => { recordVersionSet(pins, root); },
     reconcile: async () => {
-      const { moved } = await reconcileRuntime(root);
+      const { moved, error } = await reconcileRuntime(root);
       if (moved > 0) process.stdout.write(`update: moved ${moved} chat row(s) from memory to the transcript\n`);
+      if (error) process.stderr.write(`update: chat migration skipped: ${error} (memory left intact; fix the cause and re-run \`fortytwo update\`)\n`);
     },
     out: (s) => process.stdout.write(s),
     err: (s) => process.stderr.write(s),

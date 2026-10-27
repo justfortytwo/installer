@@ -24,7 +24,7 @@ import { renderPersona, loadPersonaManifest } from '../render.js';
 import { loadMemory, readInstalledVersion, readSelfCompatRanges, readSelfVersion, fetchOllamaModels, pullOllamaModel } from '../engine.js';
 import { homedir } from 'node:os';
 import { reconcileOneiros } from '../oneiros.js';
-import { migrateChatToTranscript } from '../transcript-migration.js';
+import { migrateChatSafely } from '../transcript-migration.js';
 import { installShim, npmGlobalBin, type ShimResult } from '../shim.js';
 
 // The embedder model the engine standardizes on (privacy: local-only embeddings).
@@ -120,10 +120,15 @@ export interface McpConfig {
 export const TRANSCRIPT_PACKAGE = '@justfortytwo/transcript';
 
 /**
- * Add (or replace) the `fortytwo-memory` MCP server entry, preserving others.
+ * Add (or re-wire) the `fortytwo-memory` MCP server entry, preserving others.
  * `extensions` (package names) are loaded by memory via FORTYTWO_MCP_EXTENSIONS.
  * memory resolves them from its OWN npx install, so with extensions the launch
  * uses `-p` for every package: they then share one npx prefix.
+ *
+ * The entry's existing env is kept (a hand-set EMBED_PROVIDER / EMBED_API_KEY /
+ * EMBED_MODEL or any other variable survives init and update). Only DB_PATH and
+ * FORTYTWO_MCP_EXTENSIONS are always set; OLLAMA_BASE_URL and EMBED_MODEL are
+ * set when given, else kept, else defaulted.
  */
 export function buildMcpConfig(
   existing: McpConfig | null,
@@ -132,19 +137,26 @@ export function buildMcpConfig(
   const cfg: McpConfig = existing ?? { mcpServers: {} };
   cfg.mcpServers = cfg.mcpServers ?? {};
   const extensions = opts.extensions ?? [];
+  const prior = cfg.mcpServers['fortytwo-memory'] as { env?: unknown } | undefined;
+  const priorEnv = prior?.env && typeof prior.env === 'object' && !Array.isArray(prior.env)
+    ? (prior.env as Record<string, unknown>)
+    : {};
+  // The memory MCP server reads these from its launch env (this block), not .env —
+  // so the Ollama URL must be threaded here for a remote/custom endpoint to take effect.
+  const env: Record<string, unknown> = {
+    ...priorEnv,
+    DB_PATH: opts.dbPath,
+    EMBED_MODEL: opts.embedModel ?? priorEnv.EMBED_MODEL ?? EMBED_MODEL,
+    OLLAMA_BASE_URL: opts.ollamaBaseUrl ?? priorEnv.OLLAMA_BASE_URL ?? DEFAULT_OLLAMA_BASE_URL,
+  };
+  if (extensions.length > 0) env.FORTYTWO_MCP_EXTENSIONS = extensions.join(',');
+  else delete env.FORTYTWO_MCP_EXTENSIONS;
   cfg.mcpServers['fortytwo-memory'] = {
     command: 'npx',
     args: extensions.length > 0
       ? ['-y', '-p', '@justfortytwo/memory', ...extensions.flatMap((e) => ['-p', e]), 'fortytwo-memory']
       : ['-y', '@justfortytwo/memory'],
-    // The memory MCP server reads these from its launch env (this block), not .env —
-    // so the Ollama URL must be threaded here for a remote/custom endpoint to take effect.
-    env: {
-      DB_PATH: opts.dbPath,
-      EMBED_MODEL: opts.embedModel ?? EMBED_MODEL,
-      OLLAMA_BASE_URL: opts.ollamaBaseUrl ?? DEFAULT_OLLAMA_BASE_URL,
-      ...(extensions.length > 0 ? { FORTYTWO_MCP_EXTENSIONS: extensions.join(',') } : {}),
-    },
+    env,
   };
   return cfg;
 }
@@ -170,12 +182,30 @@ function writeEnv(secrets: Record<string, string>, root: string): void {
   writeFileSync(path, mergeEnvContent(existing, secrets), 'utf8');
 }
 
+/**
+ * The project's .mcp.json, or null when absent. Throws a clear error when it
+ * exists but is not a JSON object: callers must never overwrite a file they
+ * could not parse (it may hold the user's other MCP servers).
+ */
+export function readMcpJson(root: string): McpConfig | null {
+  const path = join(root, '.mcp.json');
+  if (!existsSync(path)) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path, 'utf8'));
+  } catch (err) {
+    throw new Error(`${path} is not valid JSON (${(err as Error).message}). Fix or remove it, then re-run; it was left untouched.`);
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`${path} is not valid JSON for an MCP config (expected an object). Fix or remove it, then re-run; it was left untouched.`);
+  }
+  return parsed as McpConfig;
+}
+
 /** Write (or re-wire) the `fortytwo-memory` entry; shared by init and update. */
 export function writeMcpJson(root: string, dbPath: string, ollamaBaseUrl: string): void {
   const path = join(root, '.mcp.json');
-  const existing: McpConfig | null = existsSync(path)
-    ? (JSON.parse(readFileSync(path, 'utf8')) as McpConfig)
-    : null;
+  const existing = readMcpJson(root);
   // Wire the transcript extension only when the package is actually installed.
   const extensions = readInstalledVersion(TRANSCRIPT_PACKAGE, root) !== null ? [TRANSCRIPT_PACKAGE] : [];
   writeFileSync(
@@ -570,6 +600,8 @@ export function shimReport(r: ShimResult): { line: string; cmd: string } {
 export async function runInit(argv: string[]): Promise<number> {
   const root = process.cwd();
   const opts = parseInitArgs(argv);
+  // Fail before installing or writing anything if .mcp.json cannot be re-wired.
+  readMcpJson(root);
   const interactive = process.stdin.isTTY === true && !opts.yes;
 
   // Bootstrap: install any missing engine packages before we need them.
@@ -647,7 +679,7 @@ export async function runInit(argv: string[]): Promise<number> {
   writeMcpJson(root, opts.dbPath, ollamaBaseUrl);
   const provisionNotes = await provision({ ollamaBaseUrl, embedModel: EMBED_MODEL, dbPath: opts.dbPath });
   await reconcileOneiros(root, opts.dbPath);
-  const migration = await migrateChatToTranscript(root, opts.dbPath);
+  const migration = await migrateChatSafely(root, opts.dbPath);
   const pins = recordInstalledSet(root);
   const shim = shimReport(installShim({
     home: homedir(),
@@ -664,6 +696,7 @@ export async function runInit(argv: string[]): Promise<number> {
   out.write(`✓ rendered persona: ${render.written.length} written, ${render.skipped.length} preserved\n`);
   for (const n of provisionNotes) out.write(`  ${n}\n`);
   if (migration.moved > 0) out.write(`✓ moved ${migration.moved} chat row(s) from memory to the transcript\n`);
+  if (migration.error) out.write(`! chat migration skipped: ${migration.error} (memory left intact; fix the cause and re-run \`fortytwo init\` or \`fortytwo update\`)\n`);
   out.write(`✓ recorded ${pins.length} installed engine package(s)\n`);
   out.write(`${shim.line}\n`);
   out.write(nextSteps({

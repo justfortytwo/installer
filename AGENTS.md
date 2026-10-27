@@ -10,7 +10,7 @@
 The verbs are `init`, `start`, `status`, `stop`, `pair`, `doctor`, `update`, `rollback`, `enrich`, `forget` and `unbind` (see README.md for what each does). `enrich` is still a stub: it throws `TODO(impl)`.
 
 The CLI covers both of fortytwo's surfaces:
-1. **The npm engine**: the `@justfortytwo/{memory,gate,persona,telegram,scheduler}` packages.
+1. **The npm engine**: the `@justfortytwo/{memory,gate,persona,telegram,scheduler,transcript}` packages.
 2. **The scaffolded persona**: `CLAUDE.md` and `context/*`, rendered from the `@justfortytwo/persona` templates against `.fortytwo/identity.json`. This surface is per-user and gitignored. It is not a plugin.
 
 ## Layout
@@ -24,6 +24,8 @@ src/
   render.ts         persona renderer (managed vs captured outputs, idempotent)
   shim.ts           the user-level `fortytwo` launcher (POSIX sh) init installs on PATH
   runtime.ts        foreground supervisor behind `fortytwo start` + .fortytwo/runtime.json ownership
+  oneiros.ts        registers persona's nightly oneiros job and its memory checkpoint
+  transcript-migration.ts  one-off, idempotent move of chat rows from memory into the transcript
   commands/
     init.ts         answer resolution, .env merge, .mcp.json, engine auto-install, provisioning
     doctor.ts       health checks (DoctorDeps injection); scheduler heartbeat check
@@ -46,7 +48,7 @@ Requires Node >= 20 (`engines`). Node 20 or 22 LTS is recommended because memory
 
 ## Testing notes
 
-- `test/e2e.test.ts` and the doctor/forget/pair paths import the **real** sibling packages, for example `@justfortytwo/memory` with its `FakeEmbedder` and a real sqlite DB. These siblings are not declared in `package.json` at all (only in `fortytwo.compat`), so `npm ci` does **not** install them. Locally, those tests need the siblings resolvable through `node_modules`, either installed or linked. In CI, the shared workflow takes `siblings: "gate memory persona telegram scheduler"`; it must list every `fortytwo.compat` package, or e2e `init` runs a real `npm install` in the sandbox that prunes the linked siblings. `linkEngineInto` throws early if one is missing.
+- `test/e2e.test.ts` and the doctor/forget/pair paths import the **real** sibling packages, for example `@justfortytwo/memory` with its `FakeEmbedder` and a real sqlite DB. These siblings are not declared in `package.json` at all (only in `fortytwo.compat`), so `npm ci` does **not** install them. Locally, those tests need the siblings resolvable through `node_modules`, either installed or linked. In CI, the shared workflow takes `siblings: "gate memory persona telegram scheduler transcript"`; it must list every `fortytwo.compat` package, or e2e `init` runs a real `npm install` in the sandbox that prunes the linked siblings. `linkEngineInto` throws early if one is missing.
 - Tests use `mkdtempSync(tmpdir())` sandboxes, and e2e tests `process.chdir` into them. Restore cwd and env in `afterEach`. A test that chdirs into a sandbox and needs real siblings must call `linkEngineInto(dir)` (`test/helpers/engine.ts`), since siblings resolve from the project, not from this repo.
 - Unit tests target the pure, exported helpers rather than the fs/spawn wrappers. Examples: `resolveAnswers`, `mergeEnvContent`, `buildMcpConfig`, `engineInstallSpecs`, `pickLatestInRange`, `performUpdate`/`performRollback` with injected deps, and `runDoctorChecks(deps)`. Keep new logic in that testable form.
 
@@ -68,7 +70,8 @@ Requires Node >= 20 (`engines`). Node 20 or 22 LTS is recommended because memory
 - **Render idempotence:** MANAGED outputs are rewritten on every run. CAPTURED outputs are written once and belong to the user afterwards. Never clobber user edits. `render.ts` also guards against path traversal and prototype pollution, so keep those guards.
 - `state.json` writes are atomic (a tmp file, then rename). Rollback is **single-step** (`previous` only) and **manual**; it is never triggered automatically. Re-recording an identical set must not overwrite `previous`.
 - Secrets and `ALLOWED_CHAT_IDS` go only to the gitignored `.env`. `identity.json` holds non-secret answers. Never commit either file, and never prompt for secrets that flags or env can supply.
-- `init` writes a `fortytwo-memory` entry into `.mcp.json` (`npx -y @justfortytwo/memory`) and passes `DB_PATH`/`EMBED_MODEL`/`OLLAMA_BASE_URL` through that entry's env. The memory server reads those settings from there, not from `.env`. The defaults are `db/fortytwo.db`, `qwen3-embedding:0.6b` and `http://localhost:11434`.
+- `init` and `update` write the `fortytwo-memory` entry in `.mcp.json` (`writeMcpJson`/`buildMcpConfig`). Without transcript it launches `npx -y @justfortytwo/memory`; with `@justfortytwo/transcript` installed it launches `npx -y -p @justfortytwo/memory -p @justfortytwo/transcript fortytwo-memory` and sets `FORTYTWO_MCP_EXTENSIONS`. The entry's env passes `DB_PATH`/`EMBED_MODEL`/`OLLAMA_BASE_URL`; the memory server reads those from there, not from `.env`. Re-wiring keeps every other existing env key (e.g. `EMBED_PROVIDER`, `EMBED_API_KEY`) and an existing `EMBED_MODEL`. A `.mcp.json` that does not parse is reported and never overwritten. The defaults are `db/fortytwo.db`, `qwen3-embedding:0.6b` and `http://localhost:11434`.
+- `update` installs memory companions (`MEMORY_COMPANIONS`: transcript) that compat declares but the project lacks, whenever memory is installed; other absent siblings stay absent. A failed chat migration is reported (`chat migration skipped: …`) and never aborts `init`/`update`.
 - Answer precedence in `resolveAnswers`: answers-file, then `FORTYTWO_*` env, then flags, then the manifest default.
 - **CLI availability (`src/shim.ts`, `cliInstallSpec` in init):** `npx` runs the installer from a throwaway cache, so init (1) pins `@justfortytwo/installer@<own version>` into the project with `--save-exact` (skipped when that exact version is already there or under `--no-install`; `FORTYTWO_INSTALLER_SPEC` swaps in a local tarball for dev/CI) and (2) writes one generic launcher into the first writable dir ALREADY on PATH (`~/.local/bin`, `~/bin`, `npm prefix -g`/bin; `FORTYTWO_BIN_DIR` overrides). The launcher carries no version or project path: it walks up to the nearest `.fortytwo/` and execs that project's `node_modules/.bin/fortytwo` from the project root, but only when that `.fortytwo/` and CLI are owned by the current user (`[ -O ]`; blocks code planted by other users in shared ancestors like `/tmp`); keep that check. Never edit shell rc files or PATH; never overwrite a `fortytwo` without the `fortytwo-shim` marker; ignore npm's transient `node_modules/.bin`/`_npx` PATH entries. The installer must stay OUT of `fortytwo.compat` so `update` never moves the CLI (a test enforces this). Tests that run init must set `FORTYTWO_BIN_DIR` to a sandbox.
 - **Runtime lifecycle (`start`/`status`/`stop`):** `fortytwo start` is a foreground supervisor only. It spawns each service's own bin (`fortytwo-telegram-bridge`, `fortytwo-scheduler`) with `node`, cwd = project, env = process env > `.env` > `FORTYTWO_ROOT=<project>`, never detached, and never restarts them (Docker/systemd own that). No service logic belongs here. `.fortytwo/runtime.json` (supervisor pid + heartbeat + children) is the only ownership record; it counts as live only with a fresh heartbeat (`RUNTIME_STALE_MS`) and a living pid. `stop` signals only that pid; never add process discovery by name. `pair` refuses to print a code unless Telegram is running under `start` (`--force` overrides).
@@ -87,6 +90,7 @@ Each is a separate git repo under the `justfortytwo` org:
 - `persona`: `templates/` and `manifest.json`, consumed by `render.ts`.
 - `telegram`: the channel adapter and bindings store.
 - `scheduler`: the `fortytwo-scheduler` daemon and its heartbeat.
+- `transcript`: the chat transcript store and memory MCP extension; chat moves here from memory.
 
 The workspace also contains `docs`, `marketplace`, `runner`, `salience` and `website`. The installer does not reference them directly.
 

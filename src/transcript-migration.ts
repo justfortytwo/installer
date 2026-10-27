@@ -45,7 +45,12 @@ interface Persona {
 }
 interface MemoryRow { id: number; ts: string; content: string; source: string; tags: string | null; meta: string | null }
 
-export interface MigrationResult { moved: number; skipped: boolean }
+export interface MigrationResult {
+  moved: number;
+  skipped: boolean;
+  /** Why the migration did not run (set only by migrateChatSafely). */
+  error?: string;
+}
 /** Test seam: replace memory's deleteByIds (e.g. to simulate a crash before delete). */
 export interface MigrationDeps { deleteByIds?: (h: Handle, ids: number[]) => number }
 
@@ -152,4 +157,18 @@ export async function migrateChatToTranscript(root: string, dbPath: string, deps
     }
     return { moved, skipped: false };
   } finally { await h.k.destroy(); h.raw.close(); }
+}
+
+/**
+ * migrateChatToTranscript for init/update: a failure (malformed legacy row,
+ * SQLITE_BUSY, incompatible sibling) is returned as `error` instead of thrown,
+ * so the rest of init/update (state ledger, launcher) still completes. The move
+ * only deletes from memory after a verified import, so memory stays intact.
+ */
+export async function migrateChatSafely(root: string, dbPath: string): Promise<MigrationResult> {
+  try {
+    return await migrateChatToTranscript(root, dbPath);
+  } catch (err) {
+    return { moved: 0, skipped: true, error: err instanceof Error ? err.message : String(err) };
+  }
 }

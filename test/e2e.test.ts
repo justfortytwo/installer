@@ -10,7 +10,7 @@
 // that the packages work together, not just in isolation.
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { runInit } from '../src/commands/init.js';
@@ -177,5 +177,55 @@ describe('e2e: init -> doctor -> store/recall', () => {
       try { await h.k.destroy?.(); } catch { /* ignore */ }
       try { h.close?.(); } catch { /* ignore */ }
     }
+  });
+});
+
+describe('e2e: init re-run safety', () => {
+  const capture = async (fn: () => Promise<number>) => {
+    const write = process.stdout.write.bind(process.stdout);
+    let printed = '';
+    (process.stdout as unknown as { write: (s: string) => boolean }).write = (s: string) => { printed += s; return true; };
+    try { return { code: await fn(), printed }; } finally {
+      (process.stdout as unknown as { write: typeof write }).write = write;
+    }
+  };
+
+  it('re-running init keeps a hand-edited remote embedder config in .mcp.json', async () => {
+    expect((await capture(() => runInit(['--yes']))).code).toBe(0);
+    const path = join(dir, '.mcp.json');
+    const cfg = JSON.parse(readFileSync(path, 'utf8'));
+    Object.assign(cfg.mcpServers['fortytwo-memory'].env, { EMBED_PROVIDER: 'openai', EMBED_API_KEY: 'sk-test', EMBED_MODEL: 'text-embedding-3-large', EXTRA: 'kept' });
+    writeFileSync(path, JSON.stringify(cfg));
+    expect((await capture(() => runInit(['--yes']))).code).toBe(0);
+    const env = JSON.parse(readFileSync(path, 'utf8')).mcpServers['fortytwo-memory'].env;
+    expect(env).toMatchObject({ EMBED_PROVIDER: 'openai', EMBED_API_KEY: 'sk-test', EMBED_MODEL: 'text-embedding-3-large', EXTRA: 'kept' });
+  });
+
+  it('a failing chat migration (malformed legacy row) is reported; init still records state and the launcher', async () => {
+    expect((await capture(() => runInit(['--yes']))).code).toBe(0);
+    const memory: any = await loadSibling('@justfortytwo/memory', dir);
+    const h = memory.openDb(join(dir, 'db/fortytwo.db'));
+    try {
+      const id = await memory.store(h, new memory.FakeEmbedder(), { content: 'legacy chat', source: 'telegram:owner' });
+      h.raw.prepare("UPDATE memories SET meta = '{broken' WHERE id = ?").run(id);
+    } finally { await h.k.destroy(); h.raw.close(); }
+    rmSync(join(dir, '.fortytwo/state.json'));
+    rmSync(join(dir, 'user-bin'), { recursive: true, force: true });
+    const { code, printed } = await capture(() => runInit(['--yes']));
+    expect(code).toBe(0);
+    expect(printed).toMatch(/chat migration skipped: .*meta is not valid JSON/);
+    expect(existsSync(join(dir, '.fortytwo/state.json'))).toBe(true);
+    expect(existsSync(join(dir, 'user-bin', 'fortytwo'))).toBe(true);
+    const h2 = memory.openDb(join(dir, 'db/fortytwo.db'));
+    try { expect(h2.raw.prepare("SELECT COUNT(*) AS n FROM memories WHERE content = 'legacy chat'").get().n).toBe(1); }
+    finally { await h2.k.destroy(); h2.raw.close(); }
+  });
+
+  it('refuses a malformed .mcp.json before writing anything', async () => {
+    writeFileSync(join(dir, '.mcp.json'), '{ nope');
+    await expect(runInit(['--yes'])).rejects.toThrow(/\.mcp\.json.*not valid JSON/);
+    expect(readFileSync(join(dir, '.mcp.json'), 'utf8')).toBe('{ nope');
+    expect(existsSync(join(dir, '.fortytwo/identity.json'))).toBe(false);
+    expect(existsSync(join(dir, '.env'))).toBe(false);
   });
 });
