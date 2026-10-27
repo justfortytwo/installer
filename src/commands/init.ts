@@ -24,6 +24,7 @@ import { renderPersona, loadPersonaManifest } from '../render.js';
 import { loadMemory, readInstalledVersion, readSelfCompatRanges, readSelfVersion, fetchOllamaModels, pullOllamaModel } from '../engine.js';
 import { homedir } from 'node:os';
 import { reconcileOneiros } from '../oneiros.js';
+import { migrateChatToTranscript } from '../transcript-migration.js';
 import { installShim, npmGlobalBin, type ShimResult } from '../shim.js';
 
 // The embedder model the engine standardizes on (privacy: local-only embeddings).
@@ -169,7 +170,8 @@ function writeEnv(secrets: Record<string, string>, root: string): void {
   writeFileSync(path, mergeEnvContent(existing, secrets), 'utf8');
 }
 
-function writeMcpJson(root: string, dbPath: string, ollamaBaseUrl: string): void {
+/** Write (or re-wire) the `fortytwo-memory` entry; shared by init and update. */
+export function writeMcpJson(root: string, dbPath: string, ollamaBaseUrl: string): void {
   const path = join(root, '.mcp.json');
   const existing: McpConfig | null = existsSync(path)
     ? (JSON.parse(readFileSync(path, 'utf8')) as McpConfig)
@@ -645,6 +647,7 @@ export async function runInit(argv: string[]): Promise<number> {
   writeMcpJson(root, opts.dbPath, ollamaBaseUrl);
   const provisionNotes = await provision({ ollamaBaseUrl, embedModel: EMBED_MODEL, dbPath: opts.dbPath });
   await reconcileOneiros(root, opts.dbPath);
+  const migration = await migrateChatToTranscript(root, opts.dbPath);
   const pins = recordInstalledSet(root);
   const shim = shimReport(installShim({
     home: homedir(),
@@ -660,6 +663,7 @@ export async function runInit(argv: string[]): Promise<number> {
   out.write(`✓ wrote .env + .mcp.json (memory MCP wired)\n`);
   out.write(`✓ rendered persona: ${render.written.length} written, ${render.skipped.length} preserved\n`);
   for (const n of provisionNotes) out.write(`  ${n}\n`);
+  if (migration.moved > 0) out.write(`✓ moved ${migration.moved} chat row(s) from memory to the transcript\n`);
   out.write(`✓ recorded ${pins.length} installed engine package(s)\n`);
   out.write(`${shim.line}\n`);
   out.write(nextSteps({

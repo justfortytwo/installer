@@ -17,6 +17,8 @@
 // injected `*Deps` (so no test touches the network or the real npm).
 
 import { spawnSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { isPidAlive, liveRuntime } from '../runtime.js';
 import { HEARTBEAT_STALE_MS } from './doctor.js';
 import {
@@ -26,7 +28,10 @@ import {
 import { compareSemver, readInstalledVersion, readSelfCompatRanges, readSelfVersion, satisfiesRange } from '../engine.js';
 import { runDoctorChecks, defaultDoctorDeps, type CheckResult } from './doctor.js';
 import { reconcileOneiros } from '../oneiros.js';
-import { readProjectSetting, DEFAULT_DB_PATH, CLI_PACKAGE, cliInstallSpec } from './init.js';
+import { migrateChatToTranscript, type MigrationResult } from '../transcript-migration.js';
+import {
+  readProjectSetting, writeMcpJson, DEFAULT_DB_PATH, DEFAULT_OLLAMA_BASE_URL, CLI_PACKAGE, cliInstallSpec,
+} from './init.js';
 
 // --- pure: pick the latest published version satisfying a range ---
 
@@ -231,6 +236,29 @@ export async function performRollback(deps: RollbackDeps): Promise<number> {
 
 // --- real wiring ---
 
+/** The Ollama URL the memory server runs with now (its .mcp.json env), else .env, else the default. */
+function currentOllamaBaseUrl(root: string): string {
+  const path = join(root, '.mcp.json');
+  if (existsSync(path)) {
+    const cfg = JSON.parse(readFileSync(path, 'utf8')) as { mcpServers?: Record<string, { env?: Record<string, unknown> }> };
+    const url = cfg.mcpServers?.['fortytwo-memory']?.env?.OLLAMA_BASE_URL;
+    if (typeof url === 'string' && url.trim()) return url;
+  }
+  return readProjectSetting('OLLAMA_BASE_URL', root) ?? DEFAULT_OLLAMA_BASE_URL;
+}
+
+/**
+ * Post-update reconciliation of machine-owned runtime assets. The memory MCP
+ * entry is re-wired FIRST (with the transcript extension when installed), so
+ * moving chat out of memory never leaves the agent without transcript search.
+ */
+export async function reconcileRuntime(root: string): Promise<MigrationResult> {
+  const dbPath = readProjectSetting('DB_PATH', root) ?? DEFAULT_DB_PATH;
+  writeMcpJson(root, dbPath, currentOllamaBaseUrl(root));
+  await reconcileOneiros(root, dbPath);
+  return migrateChatToTranscript(root, dbPath);
+}
+
 /** Published versions of a package via `npm view`; [] if unknown/unreachable. */
 export function fetchPublishedVersions(pkg: string): Promise<string[]> {
   return Promise.resolve().then(() => {
@@ -272,7 +300,10 @@ export async function runUpdate(argv: string[]): Promise<number> {
     install: (specs) => npmInstall(specs, root),
     doctor: () => runDoctorChecks(defaultDoctorDeps()),
     record: (pins) => { recordVersionSet(pins, root); },
-    reconcile: () => reconcileOneiros(root, readProjectSetting('DB_PATH', root) ?? DEFAULT_DB_PATH),
+    reconcile: async () => {
+      const { moved } = await reconcileRuntime(root);
+      if (moved > 0) process.stdout.write(`update: moved ${moved} chat row(s) from memory to the transcript\n`);
+    },
     out: (s) => process.stdout.write(s),
     err: (s) => process.stderr.write(s),
   };
