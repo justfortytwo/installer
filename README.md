@@ -154,12 +154,12 @@ npx fortytwo-scheduler                            # scheduler daemon only
 
 ## Update safety
 
-From the project root, bootstrap installations pinned to installer `1.0.0-9`
+From the project root, bootstrap installations pinned to a pre-1.0.0 installer
 into this coordinated release (after publication):
 
 ```sh
 fortytwo stop
-npx @justfortytwo/installer@1.0.0-10 update
+npx @justfortytwo/installer@1.0.0 update
 fortytwo start
 ```
 
@@ -239,7 +239,7 @@ Unchanged-version updates also reconcile incomplete wiring, while dry-run does
 not mutate anything. Existing checkpoints and curated context are preserved;
 historical memory is never replayed implicitly.
 
-Existing installations first need the updated installer (`1.0.0-10`); the CLI
+Existing installations first need the updated installer (`1.0.0`); the CLI
 is project-pinned and `fortytwo update` does not update that CLI. Once these
 coordinated versions are released, use the new CLI, stop services with
 `fortytwo stop` (or the service manager), run `fortytwo update`, then restart via
