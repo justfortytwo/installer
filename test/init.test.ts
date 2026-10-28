@@ -443,13 +443,13 @@ describe('declared engine compat', () => {
     expect(engineInstallSpecs(compat, () => false)).toContain('@justfortytwo/transcript@^1.0.0');
   });
   it('pins scheduler with the internal Oneiros handler', () => {
-    expect(readSelfCompatRanges()['@justfortytwo/scheduler']).toBe('1.0.0');
+    expect(readSelfCompatRanges()['@justfortytwo/scheduler']).toBe('1.0.1');
   });
   it('pins memory to the exact 1.0.0 release with the Oneiros cursor', () => {
     expect(readSelfCompatRanges()['@justfortytwo/memory']).toBe('1.0.0');
   });
-  it('pins persona to the exact 1.0.0 release with Oneiros', () => {
-    expect(readSelfCompatRanges()['@justfortytwo/persona']).toBe('1.0.0');
+  it('pins persona to the exact 1.0.1 release with Oneiros', () => {
+    expect(readSelfCompatRanges()['@justfortytwo/persona']).toBe('1.0.1');
   });
   it('keeps fortytwo.compat the only engine version list (no deps/peerDeps on @justfortytwo/*)', () => {
     const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as Record<
