@@ -431,10 +431,10 @@ describe('declared engine compat', () => {
     // engineInstallSpecs over the real compat (nothing present) must offer scheduler.
     expect(engineInstallSpecs(compat, () => false)).toContain(`@justfortytwo/scheduler@${compat['@justfortytwo/scheduler']}`);
   });
-  it('pins telegram to the exact 1.0.0 release; runner stays transitive', () => {
+  it('pins telegram to the exact 1.0.1 release; runner stays transitive', () => {
     const compat = readSelfCompatRanges();
-    expect(compat['@justfortytwo/telegram']).toBe('1.0.0');
-    expect(engineInstallSpecs(compat, () => false)).toContain('@justfortytwo/telegram@1.0.0');
+    expect(compat['@justfortytwo/telegram']).toBe('1.0.1');
+    expect(engineInstallSpecs(compat, () => false)).toContain('@justfortytwo/telegram@1.0.1');
     expect(Object.keys(compat)).not.toContain('@justfortytwo/runner');
   });
   it('declares @justfortytwo/transcript (^1.0.0) so init installs and wires it', () => {
