@@ -19,6 +19,9 @@ default_tier = "external"
 "Read" = "read"
 "Glob" = "read"
 "Grep" = "read"
+# Web access runs on its own so the assistant can look things up. A fetched URL
+# can carry data out (in its path or query): set these two to "external" if you
+# would rather approve every request.
 "WebFetch" = "read"
 "WebSearch" = "read"
 "ToolSearch" = "read"
@@ -59,6 +62,8 @@ default_tier = "external"
 
 # Editing any of these is irreversible-tier, so the assistant cannot quietly
 # weaken the gate, approve its own requests, pair a new chat or rewire its tools.
+# .git/ is here because git config can name programs that the allowlisted git
+# commands would then run.
 # Project-relative; an entry ending in / covers everything below that directory.
 [guard]
 files = [
@@ -73,7 +78,7 @@ files = [
   ".fortytwo/",
   "state/",
   "node_modules/",
-  ".git/hooks/",
+  ".git/",
 ]
 # Edits outside this project (user-level Claude settings, other folders) are held too.
 outside_project = true

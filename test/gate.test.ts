@@ -137,7 +137,7 @@ describe('shipped policy', () => {
     expect(manifest).toMatch(/^"Bash" = "external"$/m);
     expect(manifest).toMatch(/^"mcp__fortytwo-memory__\*" = "internal"$/m);
     expect(manifest).toMatch(/^"Skill" = "internal"$/m);
-    for (const f of [SETTINGS_FILE, '.claude/policy/', ALLOWLIST_FILE, '.gate/', '.mcp.json', '.env', 'state/', 'node_modules/']) {
+    for (const f of [SETTINGS_FILE, '.claude/policy/', ALLOWLIST_FILE, '.gate/', '.mcp.json', '.env', 'state/', 'node_modules/', '.git/']) {
       expect(manifest).toContain(`"${f}",`);
     }
     expect(manifest).toMatch(/^outside_project = true$/m);
