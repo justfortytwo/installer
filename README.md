@@ -66,7 +66,9 @@ briefing, open-thread sweep, weekly learn-review); Enter keeps the current
 choice. Non-interactively, pass `--schedules all`, `--schedules none` or a
 comma-separated list of the jobs to enable (`--schedules sweep,learn_review`);
 without the flag the saved choice is left as it is. The answer is stored in
-`.fortytwo/schedules.json` and applies the next time Fortytwo starts. `init`
+`.fortytwo/schedules.json` and applies the next time Fortytwo starts. On an
+existing install, change it with `fortytwo schedules` rather than re-running
+`init`, which would ask for your identity again. `init`
 and `update` also copy the skills those schedules call from
 `@justfortytwo/persona` into `.claude/skills/`; a skill of the same name that
 you wrote yourself is left alone.
@@ -105,6 +107,7 @@ gitignored `.fortytwo/identity.json`; neither is ever committed.
 | `enrich`   | Capture more answers to deepen the persona, then re-render (no clobber). |
 | `forget`   | Permanently delete memories selected by `--id` / `--query` (semantic) / `--tag` / `--source` / `--since`/`--until` — previewed and confirmed (or `--yes`). Owner-only: it deletes via a library API, never exposed to the assistant. |
 | `unbind`   | Revoke a channel binding (un-pair a chat / drop it from the allowlist). |
+| `schedules` | Show or change which built-in schedules run (daily briefing, open-thread sweep, weekly learn-review). In a terminal it asks about each one; `--list` only shows; `--set all`, `--set none` or `--set <job,job>` decides without asking. Touches only `.fortytwo/schedules.json`; restart Fortytwo to apply. |
 
 Run `fortytwo <verb> --help` for verb-specific options.
 

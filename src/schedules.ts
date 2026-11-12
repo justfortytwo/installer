@@ -101,5 +101,5 @@ export async function askSchedules(
 /** The init report line for the saved choice. */
 export function schedulesReport(choices: ScheduleChoice[]): string {
   const state = choices.map((c) => `${c.kind} ${c.enabled ? 'on' : 'off'}`).join(', ');
-  return `✓ built-in schedules: ${state} (re-run init to change; restart Fortytwo to apply)`;
+  return `✓ built-in schedules: ${state} (change with \`fortytwo schedules\`; restart Fortytwo to apply)`;
 }

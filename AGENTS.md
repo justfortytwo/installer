@@ -7,7 +7,7 @@
 - `create-fortytwo` runs `init` when called with no verb.
 - `fortytwo <verb>` is used day to day.
 
-The verbs are `init`, `start`, `status`, `stop`, `pair`, `doctor`, `update`, `rollback`, `enrich`, `forget` and `unbind` (see README.md for what each does). `enrich` is still a stub: it throws `TODO(impl)`.
+The verbs are `init`, `start`, `status`, `stop`, `pair`, `schedules`, `doctor`, `update`, `rollback`, `enrich`, `forget` and `unbind` (see README.md for what each does). `enrich` is still a stub: it throws `TODO(impl)`.
 
 The CLI covers both of fortytwo's surfaces:
 1. **The npm engine**: the `@justfortytwo/{memory,gate,persona,telegram,scheduler,transcript}` packages.
@@ -34,6 +34,7 @@ src/
     update.ts       update + rollback logic (rollback.ts just re-exports runRollback)
     start.ts, status.ts, stop.ts   thin wrappers over runtime.ts
     pair.ts, unbind.ts, forget.ts, enrich.ts
+    schedules.ts    `fortytwo schedules`: list/ask/--set the built-in schedule choice (performSchedules with injected deps)
 test/               vitest suites (*.test.ts), incl. e2e.test.ts
 .github/workflows/ci.yml   delegates to justfortytwo/.github node-ci.yml
 ```
@@ -70,7 +71,7 @@ Requires Node >= 20 (`engines`). Node 20 or 22 LTS is recommended because memory
 - **Siblings resolve from the TARGET PROJECT, never from the installer.** Under `npx create-fortytwo` the installer runs from npm's exec cache (`~/.npm/_npx/<hash>/node_modules`), a separate tree from the project where `init` installs the engine. `findSiblingDir` (engine.ts) walks up `node_modules` from the project root (`process.cwd()`); `loadSibling`, `readInstalledVersion` and `loadPersonaManifest` all go through it, and `loadSibling` imports the resolved ESM entry by file URL. Never use a bare `import(spec)`, `createRequire(import.meta.url)` or `require.resolve` for siblings (the latter also fails on gate/telegram's import-only `exports`). There is deliberately no fallback to the installer's own tree. `test/topology.test.ts` guards this.
 - `satisfiesRange` is a deliberately minimal matcher. It handles exact versions and `^` ranges, including npm's 0.x rule. Do not add a semver dependency, and do not use range forms it cannot parse.
 - **Shipped skills (`src/skills.ts`):** persona's `manifest.skills` files are machine-owned runtime assets, so `init` AND `update` copy them into `.claude/skills/` (this is not persona rendering; update still never renders `context/*`). Outputs are confined to `.claude/skills`. A target that lacks the `Managed by fortytwo` marker is the owner's own skill: report it, never overwrite it. A persona without `skills` or without a manifest is a no-op.
-- **Built-in schedules (`src/schedules.ts`):** the scheduler owns the job list (`RECURRING_DEFS`) and the file format (`readSchedules`/`writeSchedules`, `.fortytwo/schedules.json`); the installer only asks. Interactive init asks per job (Enter keeps the saved choice), `--schedules` decides without asking, and a non-interactive init without the flag writes nothing. An old scheduler without that API is skipped.
+- **Built-in schedules (`src/schedules.ts`):** the scheduler owns the job list (`RECURRING_DEFS`) and the file format (`readSchedules`/`writeSchedules`, `.fortytwo/schedules.json`); the installer only asks. Interactive init asks per job (Enter keeps the saved choice), `--schedules` decides without asking, and a non-interactive init without the flag writes nothing. An old scheduler without that API is skipped. On an existing install the choice is changed with `fortytwo schedules`, NOT by re-running `init`: `resolveAnswers` does not read the saved `identity.json`, so a re-run without env/flags prompts for every required field and replaces the saved answers.
 - **Render idempotence:** MANAGED outputs are rewritten on every run. CAPTURED outputs are written once and belong to the user afterwards. Never clobber user edits. `render.ts` also guards against path traversal and prototype pollution, so keep those guards.
 - `state.json` writes are atomic (a tmp file, then rename). Rollback is **single-step** (`previous` only) and **manual**; it is never triggered automatically. Re-recording an identical set must not overwrite `previous`.
 - Secrets and `ALLOWED_CHAT_IDS` go only to the gitignored `.env`. `identity.json` holds non-secret answers. Never commit either file, and never prompt for secrets that flags or env can supply.

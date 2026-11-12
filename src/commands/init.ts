@@ -722,7 +722,7 @@ export async function runInit(argv: string[]): Promise<number> {
   out.write(`✓ rendered persona: ${render.written.length} written, ${render.skipped.length} preserved\n`);
   for (const line of skillsReport(skills)) out.write(`${line}\n`);
   if (scheduleChoices) out.write(`${schedulesReport(scheduleChoices)}\n`);
-  else if (scheduleOptions?.unreadable) out.write(`! ${scheduleOptions.unreadable} — fix or delete it, or re-run init interactively; the scheduler will not start until then\n`);
+  else if (scheduleOptions?.unreadable) out.write(`! ${scheduleOptions.unreadable} — the scheduler will not start until it is fixed: run \`fortytwo schedules --set <all|none|job,job>\`\n`);
   for (const n of provisionNotes) out.write(`  ${n}\n`);
   if (migration.moved > 0) out.write(`✓ moved ${migration.moved} chat row(s) from memory to the transcript\n`);
   if (migration.error) out.write(`! chat migration skipped: ${migration.error} (memory left intact; fix the cause and re-run \`fortytwo init\` or \`fortytwo update\`)\n`);
