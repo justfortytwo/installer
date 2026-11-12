@@ -48,7 +48,7 @@ To remove it: delete the launcher (`init` prints its path) and, per project,
 
 You only install **this** package — `init` installs the engine packages it needs
 on demand (`@justfortytwo/gate`, `/memory`, `/persona`, `/telegram`, `/scheduler`, `/transcript`).
-`/memory` is pinned to exact `1.0.0`, `/telegram` to exact `1.0.1`, `/persona` to exact `1.0.2`, `/scheduler` to exact `1.0.3`,
+`/memory` is pinned to exact `1.0.0`, `/telegram` to exact `1.0.2`, `/persona` to exact `1.0.2`, `/scheduler` to exact `1.0.4`,
 and `/transcript` to `^1.0.0` (see `fortytwo.compat` in `package.json`); telegram
 and scheduler pull in `@justfortytwo/runner` themselves, so the installer never
 installs runner directly. Engine versions live only in `package.json`
