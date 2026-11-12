@@ -62,8 +62,8 @@ default_tier = "external"
 
 # Editing any of these is irreversible-tier, so the assistant cannot quietly
 # weaken the gate, approve its own requests, pair a new chat or rewire its tools.
-# .git/ is here because git config can name programs that the allowlisted git
-# commands would then run.
+# .git (the directory, or a file redirecting to another one) is here because git
+# config can name programs that a git command would then run.
 # Project-relative; an entry ending in / covers everything below that directory.
 [guard]
 files = [
@@ -78,6 +78,7 @@ files = [
   ".fortytwo/",
   "state/",
   "node_modules/",
+  ".git",
   ".git/",
 ]
 # Edits outside this project (user-level Claude settings, other folders) are held too.

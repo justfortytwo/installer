@@ -137,7 +137,7 @@ describe('shipped policy', () => {
     expect(manifest).toMatch(/^"Bash" = "external"$/m);
     expect(manifest).toMatch(/^"mcp__fortytwo-memory__\*" = "internal"$/m);
     expect(manifest).toMatch(/^"Skill" = "internal"$/m);
-    for (const f of [SETTINGS_FILE, '.claude/policy/', ALLOWLIST_FILE, '.gate/', '.mcp.json', '.env', 'state/', 'node_modules/', '.git/']) {
+    for (const f of [SETTINGS_FILE, '.claude/policy/', ALLOWLIST_FILE, '.gate/', '.mcp.json', '.env', 'state/', 'node_modules/', '.git', '.git/']) {
       expect(manifest).toContain(`"${f}",`);
     }
     expect(manifest).toMatch(/^outside_project = true$/m);
@@ -147,7 +147,7 @@ describe('shipped policy', () => {
     const lines = readFileSync(join(gateAssetsDir(), 'bash-allowlist.jsonl'), 'utf8')
       .split('\n').filter((l) => l && !l.startsWith('#')).map((l) => JSON.parse(l).command_glob as string);
     expect(lines.length).toBeGreaterThan(0);
-    for (const glob of lines) expect(glob).toMatch(/^(pwd|date|ls|cat|head|tail|wc|grep|git (status|diff|log --oneline -20))( \*)?$/);
+    for (const glob of lines) expect(glob).toMatch(/^(pwd|date|ls|cat|head|tail|wc|grep)( \*)?$/);
   });
 });
 

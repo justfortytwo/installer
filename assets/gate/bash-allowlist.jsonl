@@ -9,7 +9,9 @@
 # ; & | < > ` or $( is always held, whatever this file says (see [bash] in
 # .claude/policy/capabilities.toml), which is what keeps the entries ending in *
 # from being chained into something else. Keep to read-only commands that cannot
-# run another program: no find, fd, rg, xargs, env, sh, node, python.
+# run another program: no find, fd, rg, xargs, env, sh, node, python. git is left
+# out on purpose: its config (which a .git file can redirect) can name programs
+# that even `git status` runs.
 {"command_glob":"pwd","note":"where am I"}
 {"command_glob":"date","note":"current time"}
 {"command_glob":"date *","note":"current time, formatted"}
@@ -20,6 +22,3 @@
 {"command_glob":"tail *","note":"read files"}
 {"command_glob":"wc *","note":"count lines"}
 {"command_glob":"grep *","note":"search files"}
-{"command_glob":"git status","note":"read-only repo status"}
-{"command_glob":"git diff","note":"read-only diff"}
-{"command_glob":"git log --oneline -20","note":"read-only recent history"}
