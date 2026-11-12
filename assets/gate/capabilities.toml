@@ -1,0 +1,79 @@
+# Capability manifest for a fortytwo project: the safety gate's source of truth.
+# Installed by `fortytwo gate on`. Yours to tune; fortytwo never overwrites it.
+#
+# Every tool the assistant can call has an autonomy tier:
+#   read          auto     fetch and look up (files, web)
+#   internal      auto     own workspace: files, notes, memory
+#   draft         auto     produce drafts, stage work
+#   external      confirm  anything that reaches a third party
+#   irreversible  confirm  deletes, payments, signing, and editing this guard
+#
+# A call in a confirm tier is held until you approve it once (from Telegram when
+# the bridge runs with approvals on, or with `npx fortytwo-gate approve <id>`).
+# A tool that is not listed gets default_tier, so new and unknown tools are held.
+
+default_tier = "external"
+
+[tiers]
+# --- reading ---
+"Read" = "read"
+"Glob" = "read"
+"Grep" = "read"
+"WebFetch" = "read"
+"WebSearch" = "read"
+"ToolSearch" = "read"
+"ListAgents" = "read"
+# --- own workspace ---
+"Write" = "internal"
+"Edit" = "internal"
+"NotebookEdit" = "internal"
+"TodoWrite" = "internal"
+"Skill" = "internal"
+"Task" = "internal"
+"Agent" = "internal"
+"TaskStop" = "internal"
+"ExitPlanMode" = "internal"
+"AskUserQuestion" = "internal"
+# --- fortytwo memory and conversation log (local database) ---
+"mcp__fortytwo-memory__*" = "internal"
+# Bash fails CLOSED: its base tier is external, so a command runs on its own only
+# when rules/bash-allowlist.jsonl lists it. The [bash] patterns below only raise
+# the tier, and a command matching ANY of them can never be allowlisted.
+"Bash" = "external"
+
+# JS-regex patterns (single backslashes: this file is read by the gate's own parser).
+[bash]
+# Chaining, pipes, redirection and substitution. With these always held, an
+# allowlist entry ending in * (e.g. "grep *") cannot be stretched into
+# "grep x; curl ..." or "cat secret > /somewhere".
+"[;&|<>`\n\r]|\$\(" = "external"
+"\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f?|--force)\b" = "irreversible"
+"\brm\s+-rf?\b" = "irreversible"
+"\bdd\s+if=" = "irreversible"
+"\bmkfs\b" = "irreversible"
+"\bsudo\b" = "irreversible"
+"\bchmod\b|\bchown\b" = "external"
+"\bgit\s+push\b" = "external"
+"\bcurl\b|\bwget\b" = "external"
+"\bDROP\s+TABLE\b|\bDELETE\s+FROM\b" = "external"
+
+# Editing any of these is irreversible-tier, so the assistant cannot quietly
+# weaken the gate, approve its own requests, pair a new chat or rewire its tools.
+# Project-relative; an entry ending in / covers everything below that directory.
+[guard]
+files = [
+  ".claude/policy/",
+  ".claude/settings.json",
+  ".claude/settings.local.json",
+  ".claude/hooks/",
+  "rules/bash-allowlist.jsonl",
+  ".gate/",
+  ".mcp.json",
+  ".env",
+  ".fortytwo/",
+  "state/",
+  "node_modules/",
+  ".git/hooks/",
+]
+# Edits outside this project (user-level Claude settings, other folders) are held too.
+outside_project = true

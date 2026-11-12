@@ -101,12 +101,13 @@ gitignored `.fortytwo/identity.json`; neither is ever committed.
 | `stop`     | Stop the `fortytwo start` running for this project. It signals only the process recorded in `.fortytwo/runtime.json`, and only while that record's heartbeat is fresh and its OS process-start identity matches; it never looks for processes by name. |
 | `init`     | Install any missing engine packages, pin this CLI into the project and install the `fortytwo` launcher (see [The `fortytwo` command](#the-fortytwo-command)), then capture your assistant's name + owner details (interactive, or via flags/env for CI). Writes `.fortytwo/identity.json`, secrets + `ALLOWED_CHAT_IDS` to `.env`, wires `.mcp.json`, renders the persona, provisions local infra (pulls the embedder model, migrates the memory DB), and records the installed version set. |
 | `pair`     | Issue a one-time `/login` pairing code, persisted to the bridge's bindings db so the running bridge can redeem it (the dynamic counterpart to the static `ALLOWED_CHAT_IDS` allowlist). Refuses, and tells you to run `fortytwo start`, when Telegram isn't running; `--force` issues a code anyway (for a bridge you run yourself). |
-| `doctor`   | Health-check the engine: check Gate package compatibility (`POLICY_SCHEMA_VERSION`) and memory's `MEMORY_TOOL_CONTRACT_VERSION` match what this CLI expects, confirm the memory DB is migrated, cross-check installed sibling versions against the declared compatibility ranges, and check the embedder model is pulled (warn-only). |
+| `doctor`   | Health-check the engine: check Gate package compatibility (`POLICY_SCHEMA_VERSION`) and memory's `MEMORY_TOOL_CONTRACT_VERSION` match what this CLI expects, confirm the memory DB is migrated, cross-check installed sibling versions against the declared compatibility ranges, check the embedder model is pulled (warn-only), and report whether the optional safety gate is on. |
 | `update`   | Resolve the latest in-range version of each **installed** engine package (plus `@justfortytwo/transcript` when memory is installed and it is missing), install it, rotate the rollback baseline, then run `doctor` to verify. `--dry-run` reports the resolved set without installing. |
 | `rollback` | Re-install the previous version set recorded before the last `update`, then run `doctor`. Manual by design — never auto-triggered, so you can inspect a bad upgrade first. |
 | `enrich`   | Capture more answers to deepen the persona, then re-render (no clobber). |
 | `forget`   | Permanently delete memories selected by `--id` / `--query` (semantic) / `--tag` / `--source` / `--since`/`--until` — previewed and confirmed (or `--yes`). Owner-only: it deletes via a library API, never exposed to the assistant. |
 | `unbind`   | Revoke a channel binding (un-pair a chat / drop it from the allowlist). |
+| `gate` | Show or change the optional [safety gate](#the-safety-gate-optional): `gate on` holds outward and destructive actions for your approval, `gate off` removes it. Off by default; restart Fortytwo to apply. |
 | `schedules` | Show or change which built-in schedules run (daily briefing, open-thread sweep, weekly learn-review). In a terminal it asks about each one; `--list` only shows; `--set all`, `--set none` or `--set <job,job>` decides without asking. Touches only `.fortytwo/schedules.json`; restart Fortytwo to apply. |
 
 Run `fortytwo <verb> --help` for verb-specific options.
@@ -131,6 +132,54 @@ strings. To make them permanent, set that variable in `.env` instead
 `--` passes none. `--input-format` and `--output-format` are refused, because
 fortytwo sets them itself. The memory-consolidation worker runs locked down and
 never receives these arguments.
+
+## The safety gate (optional)
+
+Off by default: Claude Code's own permissions decide what runs. To have outward
+and destructive actions wait for your approval:
+
+```sh
+fortytwo gate on     # then restart fortytwo
+fortytwo gate        # show the state
+fortytwo gate off    # remove it again
+```
+
+`gate on` adds the gate's `PreToolUse` hook to `.claude/settings.json` (your other
+settings and hooks are kept) and, when they are missing, writes two files that are
+yours to tune and are never overwritten:
+
+| File | What it decides |
+|---|---|
+| `.claude/policy/capabilities.toml` | Which tools run on their own. Reading, files in the project, skills and fortytwo's memory do; everything else, including any tool not listed, is held. |
+| `rules/bash-allowlist.jsonl` | The Bash commands that run without asking (a short read-only list). Every other command is held, and so is any command containing `;` `&` `\|` `<` `>` or a substitution. |
+
+The assistant cannot edit those files, `.claude/settings.json`, `.mcp.json`, `.env`,
+the approval store, the Telegram pairings (`state/`), `node_modules/` or anything
+outside the project folder without an approval of its own (the `[guard]` section
+of the manifest). The guard compares paths as written and does not resolve
+symbolic links. `gate off` removes the hook
+and keeps the files. `fortytwo doctor` reports the gate as on or off.
+
+Things to know before turning it on:
+
+- The hook applies to every Claude Code session started in the project folder,
+  including one you open by hand.
+- A held action in a **scheduled** run (daily briefing and the like) is not shown
+  anywhere: clear it with `npx fortytwo-gate list` and `npx fortytwo-gate approve <id>`.
+- Claude Code reads hooks when a session starts, so restart fortytwo after
+  `gate on` or `gate off`.
+
+### Approving held actions from Telegram
+
+With the gate on, `fortytwo start` lets paired chats decide: a held action shows
+up with Approve / Deny buttons. The decision is recorded in the gate's approval
+store and the gate, not the bridge, lets the action run once. Set
+`TELEGRAM_APPROVALS=0` (shell or `.env`) to keep this off and decide with
+`npx fortytwo-gate` instead.
+
+If you wire the gate's hook yourself (as a plugin, for example), ask for the
+buttons explicitly with `fortytwo start --telegram-approvals` or
+`TELEGRAM_APPROVALS=1`.
 
 ## Running as a service
 

@@ -26,6 +26,7 @@ src/
   runtime.ts        foreground supervisor behind `fortytwo start` + .fortytwo/runtime.json ownership
   oneiros.ts        registers persona's nightly oneiros job and its memory checkpoint
   skills.ts         copies persona's shipped skills into .claude/skills (init + update; never overwrites a foreign file)
+  gate.ts           optional safety gate: the hook entry in .claude/settings.json is the single on/off switch; policy files come from assets/gate/ and are never overwritten
   schedules.ts      asks which built-in scheduler jobs run; the scheduler owns the list and .fortytwo/schedules.json
   transcript-migration.ts  one-off, idempotent move of chat rows from memory into the transcript
   commands/
@@ -34,6 +35,7 @@ src/
     update.ts       update + rollback logic (rollback.ts just re-exports runRollback)
     start.ts, status.ts, stop.ts   thin wrappers over runtime.ts
     pair.ts, unbind.ts, forget.ts, enrich.ts
+    gate.ts         `fortytwo gate [on|off]`: thin command over ../gate.ts (performGate with injected deps)
     schedules.ts    `fortytwo schedules`: list/ask/--set the built-in schedule choice (performSchedules with injected deps)
 test/               vitest suites (*.test.ts), incl. e2e.test.ts
 .github/workflows/ci.yml   delegates to justfortytwo/.github node-ci.yml

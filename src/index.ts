@@ -29,6 +29,7 @@ import { runStart } from './commands/start.js';
 import { runStop } from './commands/stop.js';
 import { runStatus } from './commands/status.js';
 import { runSchedules } from './commands/schedules.js';
+import { runGate } from './commands/gate.js';
 import { readSelfVersion } from './engine.js';
 
 export type Verb =
@@ -43,7 +44,8 @@ export type Verb =
   | 'start'
   | 'stop'
   | 'status'
-  | 'schedules';
+  | 'schedules'
+  | 'gate';
 
 const USAGE = `fortytwo — install + lifecycle CLI for fortytwo
 
@@ -61,6 +63,8 @@ Verbs:
   pair        Issue a one-time /login pairing code for Telegram (needs \`fortytwo start\`).
   schedules   Show or change which built-in schedules run (daily briefing, sweep,
               learn-review). --list to only show; --set all|none|<job,job>.
+  gate        Show or change the optional safety gate: \`gate on\` holds outward and
+              destructive actions for your approval, \`gate off\` removes it. Off by default.
   doctor      Health-check the engine: memory MCP contract, gate, db migrations,
               embedder model, and installed versions vs fortytwo.compat.
   update      Resolve latest-in-range, install, run doctor, report. Points to
@@ -81,7 +85,7 @@ the version of the CLI this project runs.
 export function resolveVerb(argv: string[], invokedAs: string): Verb | 'help' | 'version' | null {
   const first = argv[0];
   if (first === '--version' || first === '-v' || first === 'version') return 'version';
-  const verbs: Verb[] = ['init', 'start', 'stop', 'status', 'pair', 'doctor', 'update', 'rollback', 'enrich', 'forget', 'unbind', 'schedules'];
+  const verbs: Verb[] = ['init', 'start', 'stop', 'status', 'pair', 'doctor', 'update', 'rollback', 'enrich', 'forget', 'unbind', 'schedules', 'gate'];
   if (first && (verbs as string[]).includes(first)) return first as Verb;
   if (!first || first === '--help' || first === '-h' || first === 'help') {
     // `create-fortytwo` with no verb implies init; otherwise show help.
@@ -108,6 +112,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     case 'stop':     return runStop(rest);
     case 'status':   return runStatus(rest);
     case 'schedules': return runSchedules(rest);
+    case 'gate':     return runGate(rest);
     case 'help':
       process.stdout.write(USAGE);
       return 0;

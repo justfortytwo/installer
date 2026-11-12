@@ -5,22 +5,28 @@ import { CLAUDE_ARGS_ENV, applyStartFlags, parseStartArgs } from '../src/command
 
 describe('parseStartArgs', () => {
   it('leaves Claude arguments untouched when there is no --', () => {
-    expect(parseStartArgs([])).toEqual({ help: false, claudeArgs: null });
+    expect(parseStartArgs([])).toEqual({ help: false, telegramApprovals: false, claudeArgs: null });
   });
 
   it('takes everything after -- verbatim as Claude arguments', () => {
     expect(parseStartArgs(['--', '--chrome', '--append-system-prompt', 'be brief']))
-      .toEqual({ help: false, claudeArgs: ['--chrome', '--append-system-prompt', 'be brief'] });
+      .toEqual({ help: false, telegramApprovals: false, claudeArgs: ['--chrome', '--append-system-prompt', 'be brief'] });
   });
 
   it('treats a bare -- as "no Claude arguments", overriding any saved value', () => {
-    expect(parseStartArgs(['--'])).toEqual({ help: false, claudeArgs: [] });
+    expect(parseStartArgs(['--'])).toEqual({ help: false, telegramApprovals: false, claudeArgs: [] });
   });
 
   it('does not read --help after -- as its own', () => {
-    expect(parseStartArgs(['--', '--help'])).toEqual({ help: false, claudeArgs: ['--help'] });
+    expect(parseStartArgs(['--', '--help'])).toEqual({ help: false, telegramApprovals: false, claudeArgs: ['--help'] });
     expect(parseStartArgs(['--help']).help).toBe(true);
     expect(parseStartArgs(['-h']).help).toBe(true);
+  });
+
+  it('reads --telegram-approvals before --, and never after it', () => {
+    expect(parseStartArgs(['--telegram-approvals'])).toEqual({ help: false, telegramApprovals: true, claudeArgs: null });
+    expect(parseStartArgs(['--telegram-approvals', '--', '--chrome'])).toEqual({ help: false, telegramApprovals: true, claudeArgs: ['--chrome'] });
+    expect(parseStartArgs(['--', '--telegram-approvals']).telegramApprovals).toBe(false);
   });
 
   it('rejects an option before -- and says where Claude arguments go', () => {
@@ -36,15 +42,28 @@ describe('applyStartFlags', () => {
   });
 
   it('keeps the env value when no -- was given', () => {
-    const env = applyStartFlags({ FORTYTWO_CLAUDE_ARGS: '["--from-env"]' }, { help: false, claudeArgs: null });
+    const env = applyStartFlags({ FORTYTWO_CLAUDE_ARGS: '["--from-env"]' }, { help: false, telegramApprovals: false, claudeArgs: null });
     expect(env.FORTYTWO_CLAUDE_ARGS).toBe('["--from-env"]');
   });
 
   it('lets the command line win over the env, as a JSON array', () => {
     const base = { FORTYTWO_CLAUDE_ARGS: '["--from-env"]', OTHER: 'x' };
-    const env = applyStartFlags(base, { help: false, claudeArgs: ['--chrome', 'two words'] });
+    const env = applyStartFlags(base, { help: false, telegramApprovals: false, claudeArgs: ['--chrome', 'two words'] });
     expect(JSON.parse(env.FORTYTWO_CLAUDE_ARGS!)).toEqual(['--chrome', 'two words']);
     expect(env.OTHER).toBe('x');
     expect(base.FORTYTWO_CLAUDE_ARGS).toBe('["--from-env"]'); // input not mutated
+  });
+});
+
+describe('applyStartFlags: --telegram-approvals', () => {
+  const none = { help: false, telegramApprovals: false, claudeArgs: null };
+
+  it('turns TELEGRAM_APPROVALS on for the services', () => {
+    expect(applyStartFlags({}, { ...none, telegramApprovals: true }).TELEGRAM_APPROVALS).toBe('1');
+  });
+
+  it('leaves the env value alone without the flag (so .env can enable or disable it)', () => {
+    expect(applyStartFlags({ TELEGRAM_APPROVALS: '0' }, none).TELEGRAM_APPROVALS).toBe('0');
+    expect(applyStartFlags({}, none).TELEGRAM_APPROVALS).toBeUndefined();
   });
 });

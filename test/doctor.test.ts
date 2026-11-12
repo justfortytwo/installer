@@ -61,7 +61,7 @@ describe('runDoctorChecks', () => {
   it('all healthy → ok, with a check per dimension', async () => {
     const { results, ok } = await runDoctorChecks(goodDeps());
     expect(ok).toBe(true);
-    expect(byName(results)['gate package compatibility'].detail).toBe('Gate package present; policySchema v1 compatible. Optional Claude hook activation and enforcement are not checked.');
+    expect(byName(results)['gate package compatibility'].detail).toBe('Gate package present; policySchema v1 compatible.');
     const names = results.map((r) => r.name);
     expect(names).toEqual(
       expect.arrayContaining(['gate package compatibility', 'memory-mcp contract', 'fortytwo.compat', 'embedder model', 'db migrations']),
@@ -150,6 +150,32 @@ describe('runDoctorChecks', () => {
     expect(check.required).toBe(false);
     expect(check.detail).toMatch(/alive/i);
     expect(check.detail).toContain('42'); // pid present in detail
+    expect(ok).toBe(true);
+  });
+});
+
+describe('safety gate check', () => {
+  const gateCheck = async (gate: DoctorDeps['gate']) =>
+    byName((await runDoctorChecks(goodDeps({ gate }))).results)['safety gate'];
+
+  it('reports off as healthy and optional', async () => {
+    const r = await gateCheck(() => ({ hook: null, installed: true, manifest: false, allowlist: false }));
+    expect(r).toMatchObject({ ok: true, required: false });
+    expect(r.detail).toMatch(/^off/);
+  });
+
+  it('reports on', async () => {
+    const r = await gateCheck(() => ({ hook: 'node gate-hook.js', installed: true, manifest: true, allowlist: true }));
+    expect(r).toMatchObject({ ok: true, required: false, detail: 'on' });
+  });
+
+  it('warns, without failing doctor, when the hook is wired but cannot work', async () => {
+    const { results, ok } = await runDoctorChecks(goodDeps({
+      gate: () => ({ hook: 'node gate-hook.js', installed: true, manifest: false, allowlist: true }),
+    }));
+    const r = byName(results)['safety gate'];
+    expect(r).toMatchObject({ ok: false, required: false });
+    expect(r.detail).toMatch(/every tool call is refused/);
     expect(ok).toBe(true);
   });
 });

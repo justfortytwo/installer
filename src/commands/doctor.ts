@@ -17,6 +17,7 @@ import {
   loadGate, loadMemory, readInstalledVersion, readSelfCompatRanges,
   satisfiesRange, fetchOllamaModels, readMigrationState, type MigrationState,
 } from '../engine.js';
+import { gateState, MANIFEST_FILE, type GateState } from '../gate.js';
 import { EMBED_MODEL, DEFAULT_OLLAMA_BASE_URL, DEFAULT_DB_PATH, readProjectSetting } from './init.js';
 
 // The contract versions this CLI was authored against. A sibling advertising a
@@ -57,6 +58,8 @@ export interface DoctorDeps {
   now: () => string;
   /** The MCP extension wiring in .mcp.json; omitted = check skipped. */
   mcpExtensions?: () => McpExtensionState | null;
+  /** Whether the optional gate hook is wired, and with what; omitted = check skipped. */
+  gate?: () => GateState;
 }
 
 /** What .mcp.json says about the memory server's extensions. */
@@ -140,7 +143,25 @@ async function checkGate(deps: DoctorDeps): Promise<CheckResult> {
   if (v !== EXPECTED_POLICY_SCHEMA) {
     return { name, ok: false, required: true, detail: `policySchema version ${v} != expected ${EXPECTED_POLICY_SCHEMA}` };
   }
-  return { name, ok: true, required: true, detail: `Gate package present; policySchema v${v} compatible. Optional Claude hook activation and enforcement are not checked.` };
+  return { name, ok: true, required: true, detail: `Gate package present; policySchema v${v} compatible.` };
+}
+
+async function checkSafetyGate(deps: DoctorDeps): Promise<CheckResult> {
+  // Never required: the gate is optional, and a broken one must not make `update`
+  // roll back. A wired hook that cannot work is still said loudly: it fails
+  // closed, so the assistant can call no tool at all.
+  const name = 'safety gate';
+  const state = deps.gate?.();
+  if (!state) return { name, ok: true, required: false, detail: 'not checked' };
+  if (state.error) return { name, ok: false, required: false, detail: `cannot tell: ${state.error}` };
+  if (state.hook === null) return { name, ok: true, required: false, detail: 'off (optional; turn on with `fortytwo gate on`)' };
+  const problems: string[] = [];
+  if (!state.installed) problems.push('@justfortytwo/gate is not installed');
+  if (!state.manifest) problems.push(`${MANIFEST_FILE} is missing`);
+  if (problems.length > 0) {
+    return { name, ok: false, required: false, detail: `on, but every tool call is refused: ${problems.join('; ')} (run \`fortytwo gate on\` to repair, or \`fortytwo gate off\`)` };
+  }
+  return { name, ok: true, required: false, detail: `on${state.allowlist ? '' : ' (no Bash allowlist: every Bash command is held)'}` };
 }
 
 async function checkMemoryContract(deps: DoctorDeps): Promise<CheckResult> {
@@ -231,6 +252,7 @@ export async function runDoctorChecks(deps: DoctorDeps): Promise<{ results: Chec
     checkMigrations(deps),
     checkSchedulerHeartbeat(deps),
     checkMcpExtensions(deps),
+    checkSafetyGate(deps),
   ]);
   const ok = results.every((r) => r.ok || !r.required);
   return { results, ok };
@@ -263,6 +285,7 @@ export function defaultDoctorDeps(): DoctorDeps {
     },
     now: () => new Date().toISOString(),
     mcpExtensions: () => readMcpExtensions(),
+    gate: () => gateState(process.cwd()),
   };
 }
 
