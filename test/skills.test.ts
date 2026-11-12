@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -51,6 +51,29 @@ describe('reconcileSkills', () => {
     expect(r).toEqual({ written: [], unchanged: [], foreign: [OUT] });
     expect(readFileSync(join(root, OUT), 'utf8')).toContain('mine');
     expect(skillsReport(r)).toEqual([expect.stringContaining(`left ${OUT} alone`)]);
+  });
+
+  it('never writes through a symlinked directory, even to a file fortytwo would otherwise manage', () => {
+    for (const link of ['.claude', '.claude/skills', '.claude/skills/demo']) {
+      const root = tmp(); const elsewhere = tmp();
+      mkdirSync(dirname(join(root, link)), { recursive: true });
+      symlinkSync(elsewhere, join(root, link), 'dir');
+      const r = reconcileSkills(root, persona());
+      expect(r, link).toEqual({ written: [], unchanged: [], foreign: [OUT] });
+      expect(existsSync(join(elsewhere, 'SKILL.md')) || existsSync(join(elsewhere, 'demo')) || existsSync(join(elsewhere, 'skills')), link).toBe(false);
+    }
+  });
+
+  it('never writes through a symlinked SKILL.md, dangling or not', () => {
+    const root = tmp(); const elsewhere = tmp();
+    mkdirSync(dirname(join(root, OUT)), { recursive: true });
+    symlinkSync(join(elsewhere, 'victim.md'), join(root, OUT)); // dangling: target does not exist
+    expect(reconcileSkills(root, persona()).foreign).toEqual([OUT]);
+    expect(existsSync(join(elsewhere, 'victim.md'))).toBe(false);
+
+    writeFileSync(join(elsewhere, 'victim.md'), SHIPPED.replace('v1', 'v0')); // carries the marker
+    expect(reconcileSkills(root, persona()).foreign).toEqual([OUT]);
+    expect(readFileSync(join(elsewhere, 'victim.md'), 'utf8')).toContain('v0');
   });
 
   it('is a no-op for a persona that predates skills', () => {

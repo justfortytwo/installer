@@ -7,10 +7,12 @@
 // why update may call this even though it never renders persona context.
 //
 // A file at a target path that fortytwo did not write (no MANAGED_MARKER) is
-// the owner's own skill and is left alone, never overwritten.
+// the owner's own skill and is left alone, never overwritten. So is a target
+// reached through a symlink (e.g. `.claude/skills` linked to a dotfiles repo):
+// this runs unattended on update and must never write outside the project.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve, sep } from 'node:path';
+import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { findSiblingDir } from './engine.js';
 
 /** Present in every skill file fortytwo ships; marks a target as safe to rewrite. */
@@ -26,7 +28,7 @@ export interface SkillsResult {
   written: string[];
   /** Outputs already identical to the shipped file. */
   unchanged: string[];
-  /** Outputs left alone because the existing file was not written by fortytwo. */
+  /** Outputs left alone: the existing file was not written by fortytwo, or the path goes through a symlink. */
   foreign: string[];
 }
 
@@ -62,6 +64,8 @@ export function reconcileSkills(root: string, personaPackageDir?: string): Skill
       throw new Error(`reconcileSkills: output path is outside ${SKILLS_OUTPUT_DIR}: ${entry.output}`);
     }
 
+    if (throughSymlink(projectRoot, outPath)) { result.foreign.push(entry.output); continue; }
+
     const shipped = readFileSync(srcPath, 'utf8');
     if (existsSync(outPath)) {
       const current = readFileSync(outPath, 'utf8');
@@ -75,10 +79,29 @@ export function reconcileSkills(root: string, personaPackageDir?: string): Skill
   return result;
 }
 
+/**
+ * True when any existing component of `target` below `root` is a symbolic
+ * link, including the file itself (also a dangling one). The lexical
+ * containment check cannot see these: a link inside `.claude/skills` would
+ * redirect the write to wherever it points.
+ */
+function throughSymlink(root: string, target: string): boolean {
+  let current = root;
+  for (const part of relative(root, target).split(sep)) {
+    current = join(current, part);
+    try {
+      if (lstatSync(current).isSymbolicLink()) return true;
+    } catch {
+      return false; // does not exist yet: nothing below it can be a link
+    }
+  }
+  return false;
+}
+
 /** One report line per outcome that the owner should know about ([] when nothing changed). */
 export function skillsReport(r: SkillsResult): string[] {
   const lines: string[] = [];
   if (r.written.length > 0) lines.push(`✓ installed ${r.written.length} skill file(s) in .claude/skills`);
-  for (const f of r.foreign) lines.push(`! left ${f} alone (not written by Fortytwo); the built-in schedule will use your version`);
+  for (const f of r.foreign) lines.push(`! left ${f} alone (not written by Fortytwo, or behind a symlink); the built-in schedule will use what is there`);
   return lines;
 }
