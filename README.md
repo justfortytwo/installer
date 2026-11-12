@@ -156,8 +156,8 @@ yours to tune and are never overwritten:
 The assistant cannot edit those files, `.claude/settings.json`, `.mcp.json`, `.env`,
 the approval store, the Telegram pairings (`state/`), `node_modules/` or anything
 outside the project folder without an approval of its own (the `[guard]` section
-of the manifest). The guard compares paths as written and does not resolve
-symbolic links. `gate off` removes the hook
+of the manifest). A path is checked as written and with symbolic links
+resolved, without regard to letter case. `gate off` removes the hook
 and keeps the files. `fortytwo doctor` reports the gate as on or off.
 
 Things to know before turning it on:
