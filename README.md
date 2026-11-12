@@ -116,6 +116,22 @@ Run `fortytwo <verb> --help` for verb-specific options.
 > installs, rotates the rollback ledger, and post-verifies with `doctor`;
 > `rollback` restores the recorded previous set. `enrich` is still a stub.
 
+## Passing arguments to Claude Code
+
+Everything after `--` on `fortytwo start` is handed to Claude Code on every chat
+and scheduled run:
+
+```sh
+fortytwo start -- --chrome
+```
+
+The arguments travel to the services as `FORTYTWO_CLAUDE_ARGS`, a JSON array of
+strings. To make them permanent, set that variable in `.env` instead
+(`FORTYTWO_CLAUDE_ARGS=["--chrome"]`); the command line wins over it, and a bare
+`--` passes none. `--input-format` and `--output-format` are refused, because
+fortytwo sets them itself. The memory-consolidation worker runs locked down and
+never receives these arguments.
+
 ## Running as a service
 
 `fortytwo start` stays in the foreground on purpose, so the thing that runs it
