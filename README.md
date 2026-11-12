@@ -48,7 +48,7 @@ To remove it: delete the launcher (`init` prints its path) and, per project,
 
 You only install **this** package — `init` installs the engine packages it needs
 on demand (`@justfortytwo/gate`, `/memory`, `/persona`, `/telegram`, `/scheduler`, `/transcript`).
-`/memory` is pinned to exact `1.0.0`, `/telegram` and `/persona` to exact `1.0.1`, `/scheduler` to exact `1.0.2`,
+`/memory` is pinned to exact `1.0.0`, `/telegram` to exact `1.0.1`, `/persona` to exact `1.0.2`, `/scheduler` to exact `1.0.3`,
 and `/transcript` to `^1.0.0` (see `fortytwo.compat` in `package.json`); telegram
 and scheduler pull in `@justfortytwo/runner` themselves, so the installer never
 installs runner directly. Engine versions live only in `package.json`
@@ -60,6 +60,16 @@ remote embedder with `--ollama-base-url https://host` (threaded into `.mcp.json`
 so the memory MCP server uses it — see [The embedder](#the-embedder)). When `@justfortytwo/transcript` is installed, `init` also lists it in `FORTYTWO_MCP_EXTENSIONS` on that `.mcp.json` entry (launching memory with `npx -y -p @justfortytwo/memory -p @justfortytwo/transcript fortytwo-memory` so both share one install), and `status`/`doctor` warn if the package, the env var and the `-p` launch args disagree, or if memory is installed without the declared transcript (chat is then not recorded). Re-wiring keeps the entry's other env (a hand-set `EMBED_PROVIDER`/`EMBED_API_KEY`/`EMBED_MODEL` survives `init` and `update`); a `.mcp.json` that does not parse is reported and left untouched. Pre-seed the optional Telegram channel
 with `--telegram-bot-token <token>` / `--allowed-chat-ids <ids>` (or the matching
 env vars) — secrets are written to the gitignored `.env`, never prompted.
+
+`init` also asks which of the scheduler's built-in schedules to run (daily
+briefing, open-thread sweep, weekly learn-review); Enter keeps the current
+choice. Non-interactively, pass `--schedules all`, `--schedules none` or a
+comma-separated list of the jobs to enable (`--schedules sweep,learn_review`);
+without the flag the saved choice is left as it is. The answer is stored in
+`.fortytwo/schedules.json` and applies the next time Fortytwo starts. `init`
+and `update` also copy the skills those schedules call from
+`@justfortytwo/persona` into `.claude/skills/`; a skill of the same name that
+you wrote yourself is left alone.
 
 ## The two-surface model
 

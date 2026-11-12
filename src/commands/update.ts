@@ -29,6 +29,7 @@ import {
 import { compareSemver, readInstalledVersion, readSelfCompatRanges, readSelfVersion, satisfiesRange } from '../engine.js';
 import { runDoctorChecks, defaultDoctorDeps, type CheckResult } from './doctor.js';
 import { reconcileOneiros } from '../oneiros.js';
+import { reconcileSkills, skillsReport } from '../skills.js';
 import { migrateChatSafely, type MigrationResult } from '../transcript-migration.js';
 import {
   readProjectSetting, readMcpJson, writeMcpJson, DEFAULT_DB_PATH, DEFAULT_OLLAMA_BASE_URL, CLI_PACKAGE, cliInstallSpec,
@@ -338,6 +339,9 @@ export async function runUpdate(argv: string[]): Promise<number> {
     doctor: () => runDoctorChecks(defaultDoctorDeps()),
     record: (pins) => { recordVersionSet(pins, root); },
     reconcile: async () => {
+      // Skills the built-in schedules call ship in persona and are machine-owned,
+      // so an update refreshes them. Owner context (context/*) is still never rendered.
+      for (const line of skillsReport(reconcileSkills(root))) process.stdout.write(`update: ${line}\n`);
       const { moved, error } = await reconcileRuntime(root);
       if (moved > 0) process.stdout.write(`update: moved ${moved} chat row(s) from memory to the transcript\n`);
       if (error) process.stderr.write(`update: chat migration skipped: ${error} (memory left intact; fix the cause and re-run \`fortytwo update\`)\n`);

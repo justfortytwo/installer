@@ -24,6 +24,8 @@ import { renderPersona, loadPersonaManifest } from '../render.js';
 import { loadMemory, readInstalledVersion, readSelfCompatRanges, readSelfVersion, fetchOllamaModels, pullOllamaModel } from '../engine.js';
 import { homedir } from 'node:os';
 import { reconcileOneiros } from '../oneiros.js';
+import { reconcileSkills, skillsReport } from '../skills.js';
+import { applySchedulesFlag, askSchedules, loadScheduleOptions, schedulesReport, type ScheduleChoice } from '../schedules.js';
 import { migrateChatSafely } from '../transcript-migration.js';
 import { installShim, npmGlobalBin, type ShimResult } from '../shim.js';
 
@@ -364,6 +366,8 @@ interface InitFlags {
   secrets: Record<string, string>;
   /** Explicit `--ollama-base-url`, if given (env/prompt resolution is in resolveOllamaBaseUrl). */
   ollamaBaseUrl?: string;
+  /** Explicit `--schedules`, if given: `all`, `none`, or the built-in jobs to enable. */
+  schedules?: string;
   dbPath: string;
 }
 
@@ -375,6 +379,7 @@ function parseInitArgs(argv: string[]): InitFlags {
   let noInstall = false;
   let answersFile: string | undefined;
   let ollamaBaseUrl: string | undefined;
+  let schedules: string | undefined;
   // Shell env, else the DB_PATH a previous init saved in .env (a re-run keeps a custom path).
   let dbPath = readProjectSetting('DB_PATH') ?? DEFAULT_DB_PATH;
   const SECRET_FLAGS: Record<string, string> = {
@@ -391,13 +396,14 @@ function parseInitArgs(argv: string[]): InitFlags {
     const val = argv[++i] ?? '';
     if (name === 'answers') answersFile = val;
     else if (name === 'ollama-base-url') ollamaBaseUrl = val.trim() || undefined;
+    else if (name === 'schedules') schedules = val;
     else if (name === 'db-path') dbPath = val;
     else if (SECRET_FLAGS[name]) secrets[SECRET_FLAGS[name]] = val;
     else flags[name.replace(/-/g, '_')] = val; // --agent-name -> agent_name
   }
   if (process.env.TELEGRAM_BOT_TOKEN) secrets.TELEGRAM_BOT_TOKEN ??= process.env.TELEGRAM_BOT_TOKEN;
   if (process.env.ALLOWED_CHAT_IDS) secrets.ALLOWED_CHAT_IDS ??= process.env.ALLOWED_CHAT_IDS;
-  return { yes, noInstall, answersFile, flags, secrets, ollamaBaseUrl, dbPath };
+  return { yes, noInstall, answersFile, flags, secrets, ollamaBaseUrl, schedules, dbPath };
 }
 
 /**
@@ -607,6 +613,19 @@ export async function runInit(argv: string[]): Promise<number> {
   // Bootstrap: install any missing engine packages before we need them.
   await ensureEngine(root, { noInstall: opts.noInstall });
 
+  // Built-in schedules: validate an explicit --schedules now, before anything
+  // is written. null = no scheduler here, or one that predates the choice.
+  const scheduleOptions = await loadScheduleOptions(root);
+  let scheduleChoices: ScheduleChoice[] | undefined;
+  if (opts.schedules !== undefined && scheduleOptions) {
+    try {
+      scheduleChoices = applySchedulesFlag(scheduleOptions.choices, opts.schedules);
+    } catch (e) {
+      process.stderr.write(`init: ${(e as Error).message}\n`);
+      return 2;
+    }
+  }
+
   const manifest = loadPersonaManifest();
   const answersFile = opts.answersFile && existsSync(opts.answersFile)
     ? (JSON.parse(readFileSync(opts.answersFile, 'utf8')) as Record<string, unknown>)
@@ -657,6 +676,8 @@ export async function runInit(argv: string[]): Promise<number> {
       const ask = (q: string) => rl.question(q);
       ollamaBaseUrl = await resolveOllamaBaseUrl({ ...urlSources, ask });
       Object.assign(opts.secrets, await collectChannelSecrets(opts.secrets, ask));
+      // Asked unless --schedules already decided. Enter keeps the saved choice.
+      if (scheduleOptions && !scheduleChoices) scheduleChoices = await askSchedules(scheduleOptions.choices, ask);
     } finally {
       rl.close();
     }
@@ -675,7 +696,12 @@ export async function runInit(argv: string[]): Promise<number> {
     root,
   );
 
+  // Non-interactive without --schedules leaves the saved choice untouched
+  // (no file = every built-in job on, the behaviour before the choice existed).
+  if (scheduleOptions && scheduleChoices) scheduleOptions.save(scheduleChoices);
+
   const render = renderPersona(identity, { root });
+  const skills = reconcileSkills(root);
   writeMcpJson(root, opts.dbPath, ollamaBaseUrl);
   const provisionNotes = await provision({ ollamaBaseUrl, embedModel: EMBED_MODEL, dbPath: opts.dbPath });
   await reconcileOneiros(root, opts.dbPath);
@@ -694,6 +720,9 @@ export async function runInit(argv: string[]): Promise<number> {
   out.write(`✓ wrote .fortytwo/identity.json (${Object.keys(answers).length} answers)\n`);
   out.write(`✓ wrote .env + .mcp.json (memory MCP wired)\n`);
   out.write(`✓ rendered persona: ${render.written.length} written, ${render.skipped.length} preserved\n`);
+  for (const line of skillsReport(skills)) out.write(`${line}\n`);
+  if (scheduleChoices) out.write(`${schedulesReport(scheduleChoices)}\n`);
+  else if (scheduleOptions?.unreadable) out.write(`! ${scheduleOptions.unreadable} — fix or delete it, or re-run init interactively; the scheduler will not start until then\n`);
   for (const n of provisionNotes) out.write(`  ${n}\n`);
   if (migration.moved > 0) out.write(`✓ moved ${migration.moved} chat row(s) from memory to the transcript\n`);
   if (migration.error) out.write(`! chat migration skipped: ${migration.error} (memory left intact; fix the cause and re-run \`fortytwo init\` or \`fortytwo update\`)\n`);

@@ -10,7 +10,7 @@
 // that the packages work together, not just in isolation.
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { runInit } from '../src/commands/init.js';
@@ -227,5 +227,72 @@ describe('e2e: init re-run safety', () => {
     expect(readFileSync(join(dir, '.mcp.json'), 'utf8')).toBe('{ nope');
     expect(existsSync(join(dir, '.fortytwo/identity.json'))).toBe(false);
     expect(existsSync(join(dir, '.env'))).toBe(false);
+  });
+});
+
+describe('e2e: built-in schedules and shipped skills', () => {
+  const quiet = async (fn: () => Promise<number>): Promise<{ code: number; out: string; err: string }> => {
+    const o = process.stdout.write.bind(process.stdout);
+    const e = process.stderr.write.bind(process.stderr);
+    let out = ''; let err = '';
+    (process.stdout as unknown as { write: (s: string) => boolean }).write = (s: string) => { out += s; return true; };
+    (process.stderr as unknown as { write: (s: string) => boolean }).write = (s: string) => { err += s; return true; };
+    try { return { code: await fn(), out, err }; } finally {
+      (process.stdout as unknown as { write: typeof o }).write = o;
+      (process.stderr as unknown as { write: typeof e }).write = e;
+    }
+  };
+  const SKILLS = ['.claude/skills/daily-briefing/SKILL.md', '.claude/skills/learn-review/SKILL.md'];
+  const SCHEDULES = '.fortytwo/schedules.json';
+
+  it('init installs the skills the built-in schedules call', async () => {
+    const { code, out } = await quiet(() => runInit(['--yes']));
+    expect(code).toBe(0);
+    for (const f of SKILLS) expect(existsSync(join(dir, f)), f).toBe(true);
+    expect(out).toContain('✓ installed 2 skill file(s) in .claude/skills');
+  });
+
+  it('non-interactive init without --schedules writes no choice, so every built-in job stays on', async () => {
+    expect((await quiet(() => runInit(['--yes']))).code).toBe(0);
+    expect(existsSync(join(dir, SCHEDULES))).toBe(false);
+  });
+
+  it('--schedules saves the choice and the scheduler seeds only those jobs', async () => {
+    const { code, out } = await quiet(() => runInit(['--yes', '--schedules', 'sweep']));
+    expect(code).toBe(0);
+    expect(out).toContain('built-in schedules: daily_briefing off, sweep on, learn_review off');
+
+    const scheduler: any = await loadSibling('@justfortytwo/scheduler', dir);
+    const memory: any = await loadSibling('@justfortytwo/memory', dir);
+    const dbPath = join(dir, 'db/fortytwo.db');
+    (await scheduler.startDaemon({ dbPath, root: dir, registry: scheduler.createRegistry([]) }))();
+    const h = memory.openDb(dbPath);
+    try {
+      const builtin = memory.listActive(h).map((j: any) => j.kind).filter((k: string) => k !== 'persona.oneiros');
+      expect(builtin).toEqual(['sweep']);
+    } finally { await h.k.destroy(); h.raw.close(); }
+  });
+
+  it('a later non-interactive init keeps the saved choice', async () => {
+    await quiet(() => runInit(['--yes', '--schedules', 'none']));
+    const saved = readFileSync(join(dir, SCHEDULES), 'utf8');
+    await quiet(() => runInit(['--yes']));
+    expect(readFileSync(join(dir, SCHEDULES), 'utf8')).toBe(saved);
+  });
+
+  it('rejects an unknown schedule before writing anything', async () => {
+    const { code, err } = await quiet(() => runInit(['--yes', '--schedules', 'briefing']));
+    expect(code).toBe(2);
+    expect(err).toMatch(/unknown schedule\(s\) briefing/);
+    expect(existsSync(join(dir, '.fortytwo/identity.json'))).toBe(false);
+    expect(existsSync(join(dir, SCHEDULES))).toBe(false);
+  });
+
+  it("re-running init leaves the owner's own skill of the same name alone", async () => {
+    mkdirSync(join(dir, '.claude/skills/learn-review'), { recursive: true });
+    writeFileSync(join(dir, SKILLS[1]!), '---\nname: learn-review\n---\nmine\n');
+    const { out } = await quiet(() => runInit(['--yes']));
+    expect(readFileSync(join(dir, SKILLS[1]!), 'utf8')).toContain('mine');
+    expect(out).toContain(`left ${SKILLS[1]} alone`);
   });
 });
