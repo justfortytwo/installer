@@ -443,7 +443,7 @@ describe('declared engine compat', () => {
     expect(engineInstallSpecs(compat, () => false)).toContain('@justfortytwo/transcript@^1.0.0');
   });
   it('pins scheduler with the internal Oneiros handler', () => {
-    expect(readSelfCompatRanges()['@justfortytwo/scheduler']).toBe('1.0.6');
+    expect(readSelfCompatRanges()['@justfortytwo/scheduler']).toBe('1.0.7');
   });
   it('pins memory to the exact 1.0.1 release with the Oneiros cursor', () => {
     expect(readSelfCompatRanges()['@justfortytwo/memory']).toBe('1.0.1');
