@@ -62,7 +62,7 @@ function describe(state: GateState): string {
 function restartNote(deps: GateDeps): string {
   return deps.running()
     ? 'Fortytwo is running: restart it to apply (`fortytwo stop` then `fortytwo start`, or restart its container/service).\n'
-    : 'Applies the next time Fortytwo starts.\n';
+    : 'Restart Fortytwo to apply (Claude Code reads hooks when a session starts).\n';
 }
 
 export function performGate(deps: GateDeps, argv: string[]): number {

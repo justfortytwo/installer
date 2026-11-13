@@ -62,7 +62,8 @@ Verbs:
   stop        Stop the \`fortytwo start\` running for this project.
   pair        Issue a one-time /login pairing code for Telegram (needs \`fortytwo start\`).
   schedules   Show or change which built-in schedules run (daily briefing, sweep,
-              learn-review). --list to only show; --set all|none|<job,job>.
+              learn-review). --list to only show; --set all|none|<job,job>;
+              --timezone <IANA name> for the clock their times are on.
   gate        Show or change the optional safety gate: \`gate on\` holds outward and
               destructive actions for your approval, \`gate off\` removes it. Off by default.
   doctor      Health-check the engine: memory MCP contract, gate, db migrations,

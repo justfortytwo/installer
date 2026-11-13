@@ -257,6 +257,20 @@ describe('e2e: built-in schedules and shipped skills', () => {
     expect(existsSync(join(dir, SCHEDULES))).toBe(false);
   });
 
+  it('init saves the owner\'s time zone for the built-in times, and never replaces a saved one', async () => {
+    const first = await quiet(() => runInit(['--yes', '--owner-timezone', 'Europe/Rome']));
+    expect(first.code).toBe(0);
+    expect(first.out).toContain('built-in schedule times are in Europe/Rome');
+    expect(JSON.parse(readFileSync(join(dir, SCHEDULES), 'utf8'))).toEqual({ version: 1, timezone: 'Europe/Rome', schedules: {} });
+
+    const again = await quiet(() => runInit(['--yes', '--owner-timezone', 'Asia/Tokyo', '--schedules', 'sweep']));
+    expect(again.code).toBe(0);
+    expect(again.out).not.toContain('built-in schedule times are in');
+    const saved = JSON.parse(readFileSync(join(dir, SCHEDULES), 'utf8'));
+    expect(saved.timezone).toBe('Europe/Rome');
+    expect(saved.schedules.sweep).toEqual({ enabled: true });
+  });
+
   it('--schedules saves the choice and the scheduler seeds only those jobs', async () => {
     const { code, out } = await quiet(() => runInit(['--yes', '--schedules', 'sweep']));
     expect(code).toBe(0);

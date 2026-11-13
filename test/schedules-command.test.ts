@@ -85,7 +85,7 @@ describe('performSchedules', () => {
 
     const stopped = harness({ running: false });
     await performSchedules(stopped.deps, { set: 'all' });
-    expect(stopped.out()).toContain('Applies the next time Fortytwo starts.');
+    expect(stopped.out()).toContain('Restart Fortytwo to apply');
   });
 
   it('fails clearly when the project has no scheduler that supports the choice', async () => {
@@ -108,5 +108,90 @@ describe('performSchedules', () => {
 describe('verb dispatch', () => {
   it('knows the schedules verb', () => {
     expect(resolveVerb(['schedules', '--list'], 'fortytwo')).toBe('schedules');
+  });
+});
+
+describe('performSchedules — time zone', () => {
+  const tz = (over: Partial<ScheduleOptions> = {}) => {
+    const zones: string[] = [];
+    const options: Partial<ScheduleOptions> = {
+      saveTimezone: (z) => { zones.push(z); },
+      validTimezone: (z) => ['UTC', 'Europe/Rome', 'Asia/Tokyo'].includes(z),
+      ...over,
+    };
+    return { options, zones };
+  };
+
+  it('reads --timezone', () => {
+    expect(parseSchedulesArgs(['--timezone', 'Europe/Rome'])).toEqual({ timezone: 'Europe/Rome' });
+    expect(parseSchedulesArgs(['--timezone'])).toEqual({ timezone: '' });
+  });
+
+  it('--timezone saves the zone and leaves the on/off choice alone', async () => {
+    const { options, zones } = tz();
+    const h = harness({ options, running: true });
+    expect(await performSchedules(h.deps, { timezone: 'Europe/Rome' })).toBe(0);
+    expect(zones).toEqual(['Europe/Rome']);
+    expect(h.state()).toEqual([]);
+    expect(h.out()).toContain('times are now in Europe/Rome');
+    expect(h.out()).toContain('restart it to apply');
+  });
+
+  it('takes utc in any case, and combines with --set', async () => {
+    const { options, zones } = tz({ timezone: 'Europe/Rome' });
+    const h = harness({ options });
+    expect(await performSchedules(h.deps, { timezone: 'utc', set: 'sweep' })).toBe(0);
+    expect(zones).toEqual(['UTC']);
+    expect(h.state()).toEqual([{ daily_briefing: false, sweep: true, learn_review: false }]);
+  });
+
+  it('rejects a name that is not a time zone and saves nothing', async () => {
+    const { options, zones } = tz();
+    const h = harness({ options });
+    expect(await performSchedules(h.deps, { timezone: 'Rome', set: 'all' })).toBe(2);
+    expect(h.err()).toMatch(/`Rome` is not a time zone/);
+    expect(zones).toEqual([]);
+    expect(h.state()).toEqual([]);
+  });
+
+  it('says so when the installed scheduler predates time zones', async () => {
+    const h = harness();
+    expect(await performSchedules(h.deps, { timezone: 'Europe/Rome' })).toBe(2);
+    expect(h.err()).toMatch(/does not support time zones yet/);
+  });
+
+  it('shows the clock in the listing, with how to change it', async () => {
+    const utc = harness({ options: tz().options });
+    await performSchedules(utc.deps, { list: true });
+    expect(utc.out()).toContain('Times are in UTC. Use your own clock with `fortytwo schedules --timezone');
+    const rome = harness({ options: tz({ timezone: 'Europe/Rome' }).options });
+    await performSchedules(rome.deps, { list: true });
+    expect(rome.out()).toContain('Times are in Europe/Rome.');
+  });
+
+  it('asks in a terminal, offering the owner\'s zone from init when none is saved', async () => {
+    const { options, zones } = tz();
+    const h = harness({ options, answers: ['', '', '', ''] });
+    const asked: string[] = [];
+    const ask = h.deps.ask!;
+    h.deps.ask = async (q) => { asked.push(q); return ask(q); };
+    h.deps.ownerTimezone = () => 'Europe/Rome';
+    expect(await performSchedules(h.deps, {})).toBe(0);
+    expect(asked.at(-1)).toBe('Time zone for these times [Europe/Rome]: ');
+    expect(zones).toEqual(['Europe/Rome']);
+  });
+
+  it('keeps the saved zone on Enter and on an answer that is not a zone', async () => {
+    const enter = tz({ timezone: 'Asia/Tokyo' });
+    const h1 = harness({ options: enter.options, answers: ['', '', '', ''] });
+    h1.deps.ownerTimezone = () => 'Europe/Rome';
+    await performSchedules(h1.deps, {});
+    expect(enter.zones).toEqual([]); // unchanged: nothing to save
+
+    const bad = tz({ timezone: 'Asia/Tokyo' });
+    const h2 = harness({ options: bad.options, answers: ['', '', '', 'Tokyo'] });
+    await performSchedules(h2.deps, {});
+    expect(bad.zones).toEqual([]);
+    expect(h2.out()).toContain('`Tokyo` is not a time zone; keeping Asia/Tokyo.');
   });
 });

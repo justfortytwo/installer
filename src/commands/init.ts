@@ -25,7 +25,9 @@ import { loadMemory, readInstalledVersion, readSelfCompatRanges, readSelfVersion
 import { homedir } from 'node:os';
 import { reconcileOneiros } from '../oneiros.js';
 import { reconcileSkills, skillsReport } from '../skills.js';
-import { applySchedulesFlag, askSchedules, loadScheduleOptions, schedulesReport, type ScheduleChoice } from '../schedules.js';
+import {
+  applySchedulesFlag, askSchedules, initialScheduleTimezone, loadScheduleOptions, schedulesReport, type ScheduleChoice,
+} from '../schedules.js';
 import { migrateChatSafely } from '../transcript-migration.js';
 import { installShim, npmGlobalBin, type ShimResult } from '../shim.js';
 
@@ -699,6 +701,10 @@ export async function runInit(argv: string[]): Promise<number> {
   // Non-interactive without --schedules leaves the saved choice untouched
   // (no file = every built-in job on, the behaviour before the choice existed).
   if (scheduleOptions && scheduleChoices) scheduleOptions.save(scheduleChoices);
+  // The built-in times follow the owner's clock. Only when no zone is saved yet:
+  // a zone set later with `fortytwo schedules --timezone` is never replaced.
+  const ownerZone = initialScheduleTimezone(scheduleOptions, answers['owner_timezone']);
+  if (ownerZone) scheduleOptions!.saveTimezone!(ownerZone);
 
   const render = renderPersona(identity, { root });
   const skills = reconcileSkills(root);
@@ -722,6 +728,7 @@ export async function runInit(argv: string[]): Promise<number> {
   out.write(`✓ rendered persona: ${render.written.length} written, ${render.skipped.length} preserved\n`);
   for (const line of skillsReport(skills)) out.write(`${line}\n`);
   if (scheduleChoices) out.write(`${schedulesReport(scheduleChoices)}\n`);
+  if (ownerZone) out.write(`✓ built-in schedule times are in ${ownerZone} (change with \`fortytwo schedules --timezone <name>\`)\n`);
   else if (scheduleOptions?.unreadable) out.write(`! ${scheduleOptions.unreadable} — the scheduler will not start until it is fixed: run \`fortytwo schedules --set <all|none|job,job>\`\n`);
   for (const n of provisionNotes) out.write(`  ${n}\n`);
   if (migration.moved > 0) out.write(`✓ moved ${migration.moved} chat row(s) from memory to the transcript\n`);

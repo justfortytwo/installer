@@ -108,7 +108,7 @@ gitignored `.fortytwo/identity.json`; neither is ever committed.
 | `forget`   | Permanently delete memories selected by `--id` / `--query` (semantic) / `--tag` / `--source` / `--since`/`--until` — previewed and confirmed (or `--yes`). Owner-only: it deletes via a library API, never exposed to the assistant. |
 | `unbind`   | Revoke a channel binding (un-pair a chat / drop it from the allowlist). |
 | `gate` | Show or change the optional [safety gate](#the-safety-gate-optional): `gate on` holds outward and destructive actions for your approval, `gate off` removes it. Off by default; restart Fortytwo to apply. |
-| `schedules` | Show or change which built-in schedules run (daily briefing, open-thread sweep, weekly learn-review). In a terminal it asks about each one; `--list` only shows; `--set all`, `--set none` or `--set <job,job>` decides without asking. Touches only `.fortytwo/schedules.json`; restart Fortytwo to apply. |
+| `schedules` | Show or change which built-in schedules run (daily briefing, open-thread sweep, weekly learn-review). In a terminal it asks about each one; `--list` only shows; `--set all`, `--set none` or `--set <job,job>` decides without asking. `--timezone <IANA name>` (e.g. `Europe/Rome`, or `utc`) sets the clock their times are on: `init` saves your zone on a new install, an existing install stays on UTC until you set it. Touches only `.fortytwo/schedules.json`; restart Fortytwo to apply. |
 
 Run `fortytwo <verb> --help` for verb-specific options.
 

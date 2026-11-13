@@ -14,6 +14,10 @@ interface SchedulerApi {
   RECURRING_DEFS?: Array<{ kind: string; description?: string }>;
   readSchedules?: (root: string) => Record<string, boolean>;
   writeSchedules?: (root: string, config: Record<string, boolean>) => void;
+  // Since scheduler 1.0.6: the time zone the built-in times are read in.
+  readScheduleTimezone?: (root: string) => string | undefined;
+  writeScheduleTimezone?: (root: string, timezone: string | undefined) => void;
+  isValidTimezone?: (tz: unknown) => boolean;
 }
 
 /** One built-in job, with the owner's current choice. */
@@ -30,6 +34,12 @@ export interface ScheduleOptions {
   unreadable?: string;
   /** Persist the given choices for the scheduler. */
   save: (choices: ScheduleChoice[]) => void;
+  /** The saved time zone for the built-in times; undefined = UTC. */
+  timezone?: string;
+  /** Persist the time zone. Absent when the installed scheduler predates time zones. */
+  saveTimezone?: (timezone: string) => void;
+  /** Whether a name is a time zone the scheduler can use. */
+  validTimezone?: (timezone: string) => boolean;
 }
 
 /**
@@ -44,12 +54,20 @@ export async function loadScheduleOptions(root: string): Promise<ScheduleOptions
 
   let saved: Record<string, boolean> = {};
   let unreadable: string | undefined;
+  let timezone: string | undefined;
   try {
     saved = readSchedules(root);
+    timezone = scheduler?.readScheduleTimezone?.(root);
   } catch (e) {
     unreadable = (e as Error).message;
   }
+  const { writeScheduleTimezone, isValidTimezone } = scheduler ?? {};
   return {
+    timezone,
+    ...(writeScheduleTimezone && isValidTimezone ? {
+      saveTimezone: (tz: string) => writeScheduleTimezone(root, tz),
+      validTimezone: (tz: string) => isValidTimezone(tz),
+    } : {}),
     choices: defs.map((d) => ({
       kind: d.kind,
       description: d.description ?? d.kind,
@@ -96,6 +114,33 @@ export async function askSchedules(
     result.push({ ...c, enabled });
   }
   return result;
+}
+
+/** `utc` in any letter case is UTC; anything else is taken as typed (IANA names are case-sensitive on some systems). */
+export function normalizeTimezone(value: string): string {
+  const v = value.trim();
+  return /^utc$/i.test(v) ? 'UTC' : v;
+}
+
+/**
+ * The zone `init` should save for the built-in times: the owner's, when it is
+ * usable and not UTC, the scheduler supports zones and none is saved yet.
+ * Otherwise undefined.
+ */
+export function initialScheduleTimezone(options: ScheduleOptions | null, ownerTimezone: unknown): string | undefined {
+  if (!options?.saveTimezone || !options.validTimezone || options.timezone || options.unreadable) return undefined;
+  if (typeof ownerTimezone !== 'string') return undefined;
+  const zone = normalizeTimezone(ownerTimezone);
+  // UTC is what the scheduler does without a saved zone: nothing to write.
+  return zone !== 'UTC' && options.validTimezone(zone) ? zone : undefined;
+}
+
+/** One line saying which clock the built-in times are on. */
+export function timezoneLine(options: Pick<ScheduleOptions, 'timezone' | 'saveTimezone'>): string {
+  if (options.timezone) return `Times are in ${options.timezone}.\n`;
+  return options.saveTimezone
+    ? 'Times are in UTC. Use your own clock with `fortytwo schedules --timezone <IANA name>` (e.g. Europe/Rome).\n'
+    : 'Times are in UTC.\n';
 }
 
 /** The init report line for the saved choice. */

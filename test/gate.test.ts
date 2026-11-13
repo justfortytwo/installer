@@ -189,7 +189,7 @@ describe('fortytwo gate (command)', () => {
     const off = run(['off']);
     expect(off).toMatchObject({ code: 0, calls: ['off'] });
     expect(off.out).toMatch(/safety gate off/);
-    expect(off.out).toMatch(/next time Fortytwo starts/);
+    expect(off.out).toMatch(/Restart Fortytwo to apply/);
   });
 
   it('reports an unchanged state without a restart note', () => {
