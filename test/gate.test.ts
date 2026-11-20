@@ -132,10 +132,11 @@ describe('enableGate / disableGate', () => {
 describe('shipped policy', () => {
   const manifest = readFileSync(join(gateAssetsDir(), 'capabilities.toml'), 'utf8');
 
-  it('holds unknown tools, frees memory and skills, and guards the gate itself', () => {
+  it('holds unknown tools, frees memory, scheduler job tools and skills, and guards the gate itself', () => {
     expect(manifest).toMatch(/^default_tier = "external"$/m);
     expect(manifest).toMatch(/^"Bash" = "external"$/m);
     expect(manifest).toMatch(/^"mcp__fortytwo-memory__\*" = "internal"$/m);
+    expect(manifest).toMatch(/^"mcp__fortytwo-scheduler__\*" = "internal"$/m);
     expect(manifest).toMatch(/^"Skill" = "internal"$/m);
     for (const f of [SETTINGS_FILE, '.claude/policy/', ALLOWLIST_FILE, '.gate/', '.mcp.json', '.env', 'state/', 'node_modules/', '.git', '.git/']) {
       expect(manifest).toContain(`"${f}",`);

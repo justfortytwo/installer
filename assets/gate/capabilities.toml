@@ -39,6 +39,9 @@ default_tier = "external"
 "AskUserQuestion" = "internal"
 # --- fortytwo memory and conversation log (local database) ---
 "mcp__fortytwo-memory__*" = "internal"
+# --- fortytwo scheduler job tools: reminders on the local job queue ---
+# They only write the local database; each scheduled turn runs under this gate.
+"mcp__fortytwo-scheduler__*" = "internal"
 # Bash fails CLOSED: its base tier is external, so a command runs on its own only
 # when rules/bash-allowlist.jsonl lists it. The [bash] patterns below only raise
 # the tier, and a command matching ANY of them can never be allowlisted.
