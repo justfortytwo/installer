@@ -21,7 +21,7 @@ import { createInterface } from 'node:readline/promises';
 import type { Identity, Answers, VersionPin } from '../state.js';
 import { writeIdentity, recordVersionSet } from '../state.js';
 import { renderPersona, loadPersonaManifest } from '../render.js';
-import { loadMemory, loadSibling, readInstalledVersion, readSelfCompatRanges, readSelfVersion, fetchOllamaModels, pullOllamaModel } from '../engine.js';
+import { loadMemory, loadSibling, readInstalledVersion, readSelfCompatRanges, readSelfVersion, fetchOllamaModels, pullOllamaModel, siblingHasBin } from '../engine.js';
 import { homedir } from 'node:os';
 import { reconcileOneiros } from '../oneiros.js';
 import { reconcileSkills, skillsReport } from '../skills.js';
@@ -123,6 +123,17 @@ export interface McpConfig {
 /** The package that extends the memory MCP server with transcript tools. */
 export const TRANSCRIPT_PACKAGE = '@justfortytwo/transcript';
 
+/** The scheduler package, its job-tools MCP bin and the `.mcp.json` entry that launches it. */
+export const SCHEDULER_PACKAGE = '@justfortytwo/scheduler';
+export const SCHEDULER_MCP_BIN = 'fortytwo-scheduler-mcp';
+export const SCHEDULER_MCP_SERVER = 'fortytwo-scheduler';
+
+/** True for a `fortytwo-scheduler` entry this CLI wrote (it launches the scheduler's MCP bin). */
+export function isOwnSchedulerEntry(entry: unknown): boolean {
+  const args = (entry as { args?: unknown } | null | undefined)?.args;
+  return Array.isArray(args) && args.includes(SCHEDULER_MCP_BIN);
+}
+
 /**
  * Add (or re-wire) the `fortytwo-memory` MCP server entry, preserving others.
  * `extensions` (package names) are loaded by memory via FORTYTWO_MCP_EXTENSIONS.
@@ -133,10 +144,16 @@ export const TRANSCRIPT_PACKAGE = '@justfortytwo/transcript';
  * EMBED_MODEL or any other variable survives init and update). Only DB_PATH and
  * FORTYTWO_MCP_EXTENSIONS are always set; OLLAMA_BASE_URL and EMBED_MODEL are
  * set when given, else kept, else defaulted.
+ *
+ * `scheduler: true` (the installed scheduler ships `fortytwo-scheduler-mcp`)
+ * also wires the `fortytwo-scheduler` entry, the agent's job tools, on the same
+ * DB_PATH, keeping its other env keys. `scheduler: false` removes that entry
+ * only when this CLI wrote it, so a scheduler without the bin (older, or rolled
+ * back) never leaves Claude Code a server that cannot start.
  */
 export function buildMcpConfig(
   existing: McpConfig | null,
-  opts: { dbPath: string; ollamaBaseUrl?: string; embedModel?: string; extensions?: string[] },
+  opts: { dbPath: string; ollamaBaseUrl?: string; embedModel?: string; extensions?: string[]; scheduler?: boolean },
 ): McpConfig {
   const cfg: McpConfig = existing ?? { mcpServers: {} };
   cfg.mcpServers = cfg.mcpServers ?? {};
@@ -162,6 +179,19 @@ export function buildMcpConfig(
       : ['-y', '@justfortytwo/memory'],
     env,
   };
+  const priorScheduler = cfg.mcpServers[SCHEDULER_MCP_SERVER] as { env?: unknown } | undefined;
+  if (opts.scheduler) {
+    const schedEnv = priorScheduler?.env && typeof priorScheduler.env === 'object' && !Array.isArray(priorScheduler.env)
+      ? (priorScheduler.env as Record<string, unknown>)
+      : {};
+    cfg.mcpServers[SCHEDULER_MCP_SERVER] = {
+      command: 'npx',
+      args: ['-y', '-p', SCHEDULER_PACKAGE, SCHEDULER_MCP_BIN],
+      env: { ...schedEnv, DB_PATH: opts.dbPath },
+    };
+  } else if (opts.scheduler === false && isOwnSchedulerEntry(priorScheduler)) {
+    delete cfg.mcpServers[SCHEDULER_MCP_SERVER];
+  }
   return cfg;
 }
 
@@ -206,15 +236,17 @@ export function readMcpJson(root: string): McpConfig | null {
   return parsed as McpConfig;
 }
 
-/** Write (or re-wire) the `fortytwo-memory` entry; shared by init and update. */
+/** Write (or re-wire) the `fortytwo-memory` and `fortytwo-scheduler` entries; shared by init and update. */
 export function writeMcpJson(root: string, dbPath: string, ollamaBaseUrl: string): void {
   const path = join(root, '.mcp.json');
   const existing = readMcpJson(root);
   // Wire the transcript extension only when the package is actually installed.
   const extensions = readInstalledVersion(TRANSCRIPT_PACKAGE, root) !== null ? [TRANSCRIPT_PACKAGE] : [];
+  // The job tools only when the installed scheduler ships their bin.
+  const scheduler = siblingHasBin(SCHEDULER_PACKAGE, SCHEDULER_MCP_BIN, root);
   writeFileSync(
     path,
-    JSON.stringify(buildMcpConfig(existing, { dbPath, ollamaBaseUrl, extensions }), null, 2) + '\n',
+    JSON.stringify(buildMcpConfig(existing, { dbPath, ollamaBaseUrl, extensions, scheduler }), null, 2) + '\n',
     'utf8',
   );
 }

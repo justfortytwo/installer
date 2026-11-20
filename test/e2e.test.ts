@@ -105,6 +105,11 @@ describe('e2e: init -> doctor -> store/recall', () => {
       const mcp = JSON.parse(readFileSync(join(dir, '.mcp.json'), 'utf8'));
       expect(env).toContain(`OLLAMA_BASE_URL=${ollama.url}\n`);
       expect(mcp.mcpServers['fortytwo-memory'].env.OLLAMA_BASE_URL).toBe(ollama.url);
+      // the linked scheduler ships its job tools: wired on the same database
+      expect(mcp.mcpServers['fortytwo-scheduler']).toEqual({
+        command: 'npx', args: ['-y', '-p', '@justfortytwo/scheduler', 'fortytwo-scheduler-mcp'],
+        env: { DB_PATH: mcp.mcpServers['fortytwo-memory'].env.DB_PATH },
+      });
       // the availability check went to that server; model present -> no pull
       expect(ollama.requests.map((r) => `${r.method} ${r.path}`)).toEqual(['GET /api/tags']);
     } finally {

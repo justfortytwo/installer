@@ -106,6 +106,18 @@ export function readInstalledVersion(spec: string, projectRoot: string = process
   }
 }
 
+/** Whether the installed sibling declares `bin` in its package.json (false when absent or unreadable). */
+export function siblingHasBin(spec: string, bin: string, projectRoot: string = process.cwd()): boolean {
+  const dir = findSiblingDir(spec, projectRoot);
+  if (!dir) return false;
+  try {
+    const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { bin?: unknown };
+    return !!pkg.bin && typeof pkg.bin === 'object' && typeof (pkg.bin as Record<string, unknown>)[bin] === 'string';
+  } catch {
+    return false;
+  }
+}
+
 /** Walk up from this module to find the installer's own package.json. */
 function findSelfPackageJson(): Record<string, unknown> | null {
   let dir = dirname(fileURLToPath(import.meta.url));
