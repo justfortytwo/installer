@@ -64,19 +64,27 @@ const MAX_LIST_ITEMS = 20;
 const MAX_FACTS = 200;
 const FACT_KEY = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 // Characters that can hide, reorder or rewrite text on a terminal or in the
-// rendered persona: C0 controls (except tab and newline), DEL, C1 controls,
-// bidi marks/overrides/isolates, zero-width characters, line and paragraph
-// separators, and the BOM. None of them belongs in a profile value.
-const UNSAFE_CHARS = '\\u0000-\\u0008\\u000B-\\u001F\\u007F-\\u009F\\u061C\\u200B-\\u200F\\u2028-\\u202E\\u2060-\\u2069\\uFEFF';
-const CONTROL = new RegExp(`[${UNSAFE_CHARS}]`);
-const UNSAFE_GLOBAL = new RegExp(`[${UNSAFE_CHARS}]`, 'g');
-// Markdown structure that would let a summary value add sections or code
-// blocks to the rendered persona: ATX headings and code fences.
-const MARKDOWN_STRUCTURE = /^ {0,3}(#{1,6}(\s|$)|`{3,}|~{3,})/m;
+// rendered persona, or smuggle invisible instructions to a model. By Unicode
+// category, so new code points are covered without a list to maintain:
+// - Cc: control characters, U+0000-001F and U+007F-009F, except tab and newline
+// - Cf: format characters (bidi marks/overrides/isolates, zero-width
+//   characters, BOM, the U+E0000 tag block, invisible operators)
+// - Co, Cn: private-use and unassigned code points
+// - Zl, Zp: line and paragraph separators
+// plus invisible filler letters and the supplementary variation selectors
+// (U+E0100-E01EF), which carry no visible glyph. The basic variation selectors
+// (U+FE00-FE0F) stay allowed because emoji need them.
+const UNSAFE_CLASS = '[\\u0000-\\u0008\\u000B-\\u001F\\u007F-\\u009F\\p{Cf}\\p{Co}\\p{Cn}\\p{Zl}\\p{Zp}\\u115F\\u1160\\u3164\\uFFA0\\u{E0100}-\\u{E01EF}]';
+const CONTROL = new RegExp(UNSAFE_CLASS, 'u');
+const UNSAFE_GLOBAL = new RegExp(UNSAFE_CLASS, 'gu');
+// Lines that would open a new markdown block when a summary value is rendered
+// into the persona: ATX headings, code fences, setext underlines and thematic
+// breaks, raw HTML, and indented code (4+ spaces or a leading tab).
+const MARKDOWN_STRUCTURE = /^(?: {0,3}(?:#{1,6}(?:[ \t]|$)|`{3,}|~{3,}|(?:[*_-][ \t]*){3,}$|=+[ \t]*$|-+[ \t]*$|<)| {4,}|\t)/m;
 
 /**
  * Make text safe to print on the owner's terminal: every character in
- * UNSAFE_CHARS becomes a visible \u{XXXX} escape. Newlines are kept. Use it on
+ * UNSAFE_CLASS becomes a visible \u{XXXX} escape. Newlines are kept. Use it on
  * anything that came from a draft, a fetched page, an upload or memory.
  */
 export function escapeForTerminal(s: string): string {
@@ -147,7 +155,7 @@ function parseSummaryValue(field: PersonaManifestField, v: unknown, where: strin
     for (const [i, item] of v.entries()) {
       const s = cleanText(item, MAX_LINE, false);
       if (typeof s !== 'string') { errors.push(`${where}: item ${i + 1} ${s.error}`); return null; }
-      if (MARKDOWN_STRUCTURE.test(s)) { errors.push(`${where}: item ${i + 1} contains a markdown heading or code fence`); return null; }
+      if (MARKDOWN_STRUCTURE.test(s)) { errors.push(`${where}: item ${i + 1} contains a markdown block (heading, fence, rule, HTML or indented code)`); return null; }
       items.push(s);
     }
     if (items.length === 0) { errors.push(`${where}: value is empty`); return null; }
@@ -155,7 +163,7 @@ function parseSummaryValue(field: PersonaManifestField, v: unknown, where: strin
   }
   const s = cleanText(v, field.type === 'text' ? MAX_TEXT : MAX_LINE, field.type === 'text');
   if (typeof s !== 'string') { errors.push(`${where}: value ${s.error}`); return null; }
-  if (MARKDOWN_STRUCTURE.test(s)) { errors.push(`${where}: value contains a markdown heading or code fence`); return null; }
+  if (MARKDOWN_STRUCTURE.test(s)) { errors.push(`${where}: value contains a markdown block (heading, fence, rule, HTML or indented code)`); return null; }
   return s;
 }
 
