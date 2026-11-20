@@ -21,7 +21,7 @@ import { createInterface } from 'node:readline/promises';
 import type { Identity, Answers, VersionPin } from '../state.js';
 import { writeIdentity, recordVersionSet } from '../state.js';
 import { renderPersona, loadPersonaManifest } from '../render.js';
-import { loadMemory, readInstalledVersion, readSelfCompatRanges, readSelfVersion, fetchOllamaModels, pullOllamaModel } from '../engine.js';
+import { loadMemory, loadSibling, readInstalledVersion, readSelfCompatRanges, readSelfVersion, fetchOllamaModels, pullOllamaModel } from '../engine.js';
 import { homedir } from 'node:os';
 import { reconcileOneiros } from '../oneiros.js';
 import { reconcileSkills, skillsReport } from '../skills.js';
@@ -335,7 +335,8 @@ export async function ensureEmbedModel(
 /**
  * Provision local infra: make the embedder model available (warn-only, like wakeup.sh —
  * the engine degrades to a fake embedder rather than hard-failing) and run the
- * memory DB migrations via the memory package (the engine owns the schema; the
+ * memory DB migrations via the memory package, then the scheduler's (it owns the
+ * jobs table) when the scheduler is installed (the engine owns the schema; the
  * CLI must not duplicate it).
  */
 async function provision(opts: { ollamaBaseUrl: string; embedModel: string; dbPath: string }): Promise<string[]> {
@@ -350,6 +351,11 @@ async function provision(opts: { ollamaBaseUrl: string; embedModel: string; dbPa
     try {
       await (mem as unknown as { runMigrations: (k: unknown) => Promise<void> }).runMigrations(handle.k);
       notes.push('✓ memory DB migrated');
+      const scheduler = await loadSibling<{ runSchedulerMigrations?: (k: unknown) => Promise<void> }>('@justfortytwo/scheduler');
+      if (typeof scheduler?.runSchedulerMigrations === 'function') {
+        await scheduler.runSchedulerMigrations(handle.k);
+        notes.push('✓ scheduler jobs table migrated');
+      }
     } finally {
       try { await (handle.k as { destroy?: () => Promise<void> })?.destroy?.(); } catch { /* best-effort */ }
       try { handle.close?.(); } catch { /* best-effort */ }

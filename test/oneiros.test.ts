@@ -19,10 +19,11 @@ async function fixture() {
  const h=memory.openDb(join(root,'db/existing.db')); await memory.runMigrations(h.k);
  h.raw.prepare("INSERT INTO memories(content) VALUES ('historical owner preferences')").run();
  await h.k.destroy(); h.raw.close();
- return {root,files,memory};
+ const scheduler:any=await loadSibling('@justfortytwo/scheduler',root);
+ return {root,files,memory,scheduler};
 }
 it('update preserves all curated files and identity, skips history and seeds exactly one persistent job',async()=>{
- const {root,files,memory}=await fixture();
+ const {root,files,memory,scheduler}=await fixture();
  const before=new Map([...files,'.fortytwo/identity.json'].map(f=>[f,readFileSync(join(root,f))]));
  let version='1.0.0-0';
  const deps:UpdateDeps={readState:()=>({stateVersion:1,current:[],previous:null,lastUpdatedAt:''}), installedVersion:()=>version,
@@ -40,7 +41,7 @@ it('update preserves all curated files and identity, skips history and seeds exa
   expect(await performUpdate(deps,{})).toBe(0);
   expect(readFileSync(join(root,'.fortytwo/oneiros/checkpoint.json'),'utf8')).toBe(checkpoint);
   expect(persona.hasWork(root,source)).toBe(true);
-  const jobs=memory.listActive(h).filter((j:any)=>j.kind==='persona.oneiros');
+  const jobs=scheduler.listActive(h).filter((j:any)=>j.kind==='persona.oneiros');
   expect(jobs).toHaveLength(1); expect(jobs[0].recurrence).toBe('17 3 * * *');
   for(const [f,bytes] of before) expect(readFileSync(join(root,f))).toEqual(bytes);
  } finally {await h.k.destroy();h.raw.close();}
@@ -53,7 +54,7 @@ it('dry-run on an unchanged version does not initialize maintenance',async()=>{
 });
 
 it('repairs interruption between checkpoint initialization and job seeding without resetting the baseline',async()=>{
- const {root,memory}=await fixture(); const persona:any=await loadSibling('@justfortytwo/persona',root);
+ const {root,memory,scheduler}=await fixture(); const persona:any=await loadSibling('@justfortytwo/persona',root);
  const h=memory.openDb(join(root,'db/existing.db'));
  try {
   persona.initialize(root,memory.memoryHead(h));
@@ -61,6 +62,6 @@ it('repairs interruption between checkpoint initialization and job seeding witho
   h.raw.prepare("INSERT INTO memories(content) VALUES ('arrived during interrupted upgrade')").run();
   await reconcileOneiros(root,'db/existing.db');
   expect(readFileSync(join(root,'.fortytwo/oneiros/checkpoint.json'),'utf8')).toBe(checkpoint);
-  expect(memory.listActive(h).filter((j:any)=>j.kind==='persona.oneiros')).toHaveLength(1);
+  expect(scheduler.listActive(h).filter((j:any)=>j.kind==='persona.oneiros')).toHaveLength(1);
  } finally {await h.k.destroy();h.raw.close();}
 });
