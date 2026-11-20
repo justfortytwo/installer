@@ -145,6 +145,31 @@ describe('buildMcpConfig', () => {
     expect('FORTYTWO_MCP_EXTENSIONS' in mem.env).toBe(false);
     expect(mem.args).toEqual(['-y', '@justfortytwo/memory']);
   });
+
+  it('wires the scheduler job tools on the same DB_PATH when the scheduler ships them', () => {
+    const cfg = buildMcpConfig({ mcpServers: { other: { command: 'x' } } }, { dbPath: 'db/fortytwo.db', scheduler: true });
+    expect(cfg.mcpServers['fortytwo-scheduler']).toEqual({
+      command: 'npx',
+      args: ['-y', '-p', '@justfortytwo/scheduler', 'fortytwo-scheduler-mcp'],
+      env: { DB_PATH: 'db/fortytwo.db' },
+    });
+    expect(cfg.mcpServers.other).toEqual({ command: 'x' });
+  });
+
+  it('re-wiring the scheduler entry keeps its other env keys and moves DB_PATH', () => {
+    const existing = { mcpServers: { 'fortytwo-scheduler': { command: 'npx', args: ['-y', '-p', '@justfortytwo/scheduler', 'fortytwo-scheduler-mcp'], env: { DB_PATH: 'old.db', FORTYTWO_ROOT: '/srv/ft' } } } };
+    const cfg = buildMcpConfig(existing, { dbPath: 'db/new.db', scheduler: true });
+    expect((cfg.mcpServers['fortytwo-scheduler'] as { env: Record<string, string> }).env).toEqual({ DB_PATH: 'db/new.db', FORTYTWO_ROOT: '/srv/ft' });
+  });
+
+  it('removes its own scheduler entry when the scheduler no longer ships the bin, never a foreign one', () => {
+    const own = buildMcpConfig(null, { dbPath: 'd', scheduler: true });
+    expect('fortytwo-scheduler' in buildMcpConfig(own, { dbPath: 'd', scheduler: false }).mcpServers).toBe(false);
+    const foreign = { mcpServers: { 'fortytwo-scheduler': { command: 'my-own-server' } } };
+    expect(buildMcpConfig(foreign, { dbPath: 'd', scheduler: false }).mcpServers['fortytwo-scheduler']).toEqual({ command: 'my-own-server' });
+    // Not told (older callers): left as is.
+    expect(buildMcpConfig(buildMcpConfig(null, { dbPath: 'd', scheduler: true }), { dbPath: 'd' }).mcpServers['fortytwo-scheduler']).toBeDefined();
+  });
 });
 
 // Scripted readline: answers are consumed in order; records every prompt shown.
