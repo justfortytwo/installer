@@ -255,7 +255,9 @@ describe('e2e: built-in schedules and shipped skills', () => {
     const { code, out } = await quiet(() => runInit(['--yes']));
     expect(code).toBe(0);
     for (const f of SKILLS) expect(existsSync(join(dir, f)), f).toBe(true);
-    expect(out).toContain('✓ installed 2 skill file(s) in .claude/skills');
+    // Plus the owner-invoked onboarding interview.
+    expect(existsSync(join(dir, '.claude/skills/onboarding/SKILL.md'))).toBe(true);
+    expect(out).toContain('✓ installed 3 skill file(s) in .claude/skills');
   });
 
   it('non-interactive init without --schedules writes no choice, so every built-in job stays on', async () => {
