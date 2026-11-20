@@ -33,6 +33,18 @@ export const STATE_FILE = 'state.json';
  */
 export type Answers = Record<string, string | string[]>;
 
+/** Provenance of one owner-profile claim confirmed through `fortytwo onboard`. */
+export interface ProfileProvenance {
+  /** How it was learned. A `test` result is self-report, never a label. */
+  source: 'link' | 'upload' | 'test' | 'interview';
+  /** The URL, file name or test name, when there is one. */
+  ref?: string;
+  /** ISO date (YYYY-MM-DD) the claim was made or observed. */
+  date: string;
+  /** Stated or seen in the source, versus inferred from it. */
+  observed: 'observed' | 'inferred';
+}
+
 /** Channel binding captured at init/pair (e.g. the Telegram chat allowlist). */
 export interface ChannelBinding {
   // TODO(wire): shape mirrors @justfortytwo/telegram's binding record. The
@@ -55,6 +67,11 @@ export interface Identity {
    * `owner_name`, `owner_values`). `enrich` adds/updates keys here over time.
    */
   answers: Answers;
+  /**
+   * Where each answer set by `fortytwo onboard` came from, keyed like `answers`.
+   * Metadata only: the persona renderer never reads it.
+   */
+  profileProvenance?: Record<string, ProfileProvenance>;
   channels?: ChannelBinding[];
   createdAt: string;
   updatedAt: string;
