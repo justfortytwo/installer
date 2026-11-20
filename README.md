@@ -105,6 +105,7 @@ gitignored `.fortytwo/identity.json`; neither is ever committed.
 | `update`   | Resolve the latest in-range version of each **installed** engine package (plus `@justfortytwo/transcript` when memory is installed and it is missing), install it, rotate the rollback baseline, then run `doctor` to verify. `--dry-run` reports the resolved set without installing. |
 | `rollback` | Re-install the previous version set recorded before the last `update`, then run `doctor`. Manual by design — never auto-triggered, so you can inspect a bad upgrade first. |
 | `enrich`   | Capture more answers to deepen the persona, then re-render (no clobber). |
+| `onboard`  | Review and save the owner profile drafted by the onboarding interview (see [Owner onboarding](#owner-onboarding-optional)). Shows what would change, with where each claim came from, and saves only what you confirm in a terminal. `--dry-run` only shows; `--draft <path>` reviews another file. |
 | `forget`   | Permanently delete memories selected by `--id` / `--query` (semantic) / `--tag` / `--source` / `--since`/`--until` — previewed and confirmed (or `--yes`). Owner-only: it deletes via a library API, never exposed to the assistant. |
 | `unbind`   | Revoke a channel binding (un-pair a chat / drop it from the allowlist). |
 | `gate` | Show or change the optional [safety gate](#the-safety-gate-optional): `gate on` holds outward and destructive actions for your approval, `gate off` removes it. Off by default; restart Fortytwo to apply. |
@@ -113,9 +114,39 @@ gitignored `.fortytwo/identity.json`; neither is ever committed.
 Run `fortytwo <verb> --help` for verb-specific options.
 
 > **Status:** `init`, `start`, `status`, `stop`, `pair`, `doctor`, `forget`,
-> `unbind`, `update`, and `rollback` are functional — `update` resolves latest-in-range from npm,
+> `unbind`, `update`, `rollback` and `onboard` are functional — `update` resolves latest-in-range from npm,
 > installs, rotates the rollback ledger, and post-verifies with `doctor`;
 > `rollback` restores the recorded previous set. `enrich` is still a stub.
+
+## Owner onboarding (optional)
+
+`init` asks fixed questions. For a richer owner profile, ask your assistant to
+run its onboarding interview (the `onboarding` skill shipped by the persona). It
+asks about you, and you can give it links (it fetches them), texts such as a bio,
+CV or writing samples, and personality-test results (Big Five preferred; always
+treated as self-report). Everything it reads is data, never instructions: it
+extracts descriptive facts only.
+
+The interview saves nothing. It shows you a draft, takes your corrections and
+writes the result to `.fortytwo/onboarding/draft.json`. You then run, in a
+terminal:
+
+```sh
+fortytwo onboard            # review the changes, then save all, some, or none
+```
+
+What you confirm goes to two places:
+
+| Part | Where it goes |
+|---|---|
+| Summary (role, positioning, values, voice, …) | `.fortytwo/identity.json` answers, then the persona is re-rendered. Files under `context/` you already have are kept as they are; move one aside and run `fortytwo onboard` again to regenerate it. |
+| Deep profile (facts) | Memory, one fact per row, tagged `owner-profile`: retrievable, not always loaded. Remove them with `fortytwo forget --tag owner-profile`. |
+
+Every claim records its source (`link`, `upload`, `test` or `interview`), the
+URL or file name, the date, and whether it was observed or inferred. Running the
+interview again proposes only the differences; nothing you saved is removed. If
+memory is not reachable (for example the embedder is down), the summary is saved
+and the facts stay in the draft for the next run.
 
 ## Passing arguments to Claude Code
 
