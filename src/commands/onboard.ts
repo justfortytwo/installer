@@ -142,7 +142,12 @@ export async function performOnboard(deps: OnboardDeps, flags: OnboardFlags): Pr
   let existing: ExistingFact[] = [];
   let pendingFacts = 0;
   if (draft.facts.length > 0) {
-    const m = await deps.memory();
+    let m: ProfileMemory | { unavailable: string };
+    try {
+      m = await deps.memory();
+    } catch (e) {
+      m = { unavailable: `memory could not be opened (${(e as Error).message})` };
+    }
     if ('unavailable' in m) {
       pendingFacts = draft.facts.length;
     } else {
@@ -222,8 +227,10 @@ export async function performOnboard(deps: OnboardDeps, flags: OnboardFlags): Pr
 }
 
 type MemoryRow = { id: number; content: string; meta: string | null };
+/** memory's DbHandles, typed loosely: a Knex handle and the raw better-sqlite3 one. */
+type MemoryHandle = { k?: { destroy?: () => Promise<void> }; raw?: { close?: () => void } };
 interface MemoryApi {
-  openDb(path: string): { k?: { destroy?: () => Promise<void> }; close?: () => void };
+  openDb(path: string): MemoryHandle;
   query(h: unknown, opts: Record<string, unknown>): Promise<MemoryRow[]>;
   store(h: unknown, embedder: unknown, m: Record<string, unknown>): Promise<number>;
   embedderFromEnv(env: Record<string, string | undefined>): unknown;
@@ -249,15 +256,27 @@ export async function openProfileMemory(root: string): Promise<ProfileMemory | {
   const dbPath = resolve(root, mcpEnv.DB_PATH ?? readProjectSetting('DB_PATH', root) ?? DEFAULT_DB_PATH);
   if (!existsSync(dbPath)) return { unavailable: `the memory database ${dbPath} does not exist (run \`fortytwo init\`)` };
   const api = mem as MemoryApi;
-  const h = api.openDb(dbPath);
-  const embedder = api.embedderFromEnv({ ...process.env, ...mcpEnv });
+  // Opening can fail (a native-module mismatch, a locked or corrupt file) and
+  // so can choosing the embedder (an unknown EMBED_PROVIDER): either way memory
+  // is unavailable for this run, so the summary still saves.
+  let h: MemoryHandle | undefined;
+  const close = async (): Promise<void> => {
+    try { await h?.k?.destroy?.(); } catch { /* best-effort */ }
+    try { h?.raw?.close?.(); } catch { /* best-effort */ }
+  };
+  let embedder: unknown;
+  try {
+    h = api.openDb(dbPath);
+    embedder = api.embedderFromEnv({ ...process.env, ...mcpEnv });
+  } catch (e) {
+    await close();
+    return { unavailable: `memory could not be opened (${(e as Error).message})` };
+  }
+  const handle = h;
   return {
-    existing: async () => existingFactsFromRows(await api.query(h, { tag: PROFILE_TAG, limit: 100000 })),
-    store: (claim, supersedes) => api.store(h, embedder, factToMemory(claim, supersedes)),
-    close: async () => {
-      try { await h.k?.destroy?.(); } catch { /* best-effort */ }
-      try { h.close?.(); } catch { /* best-effort */ }
-    },
+    existing: async () => existingFactsFromRows(await api.query(handle, { tag: PROFILE_TAG, limit: 100000 })),
+    store: (claim, supersedes) => api.store(handle, embedder, factToMemory(claim, supersedes)),
+    close,
   };
 }
 
