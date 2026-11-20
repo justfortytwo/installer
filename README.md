@@ -57,7 +57,7 @@ trips npm's peer resolution. Pass
 `--no-install` to manage them yourself, and `--yes` (with `--answers <file.json>`
 or `FORTYTWO_*` env) for non-interactive installs. Point the memory engine at a
 remote embedder with `--ollama-base-url https://host` (threaded into `.mcp.json`,
-so the memory MCP server uses it — see [The embedder](#the-embedder)). When `@justfortytwo/transcript` is installed, `init` also lists it in `FORTYTWO_MCP_EXTENSIONS` on that `.mcp.json` entry (launching memory with `npx -y -p @justfortytwo/memory -p @justfortytwo/transcript fortytwo-memory` so both share one install), and `status`/`doctor` warn if the package, the env var and the `-p` launch args disagree, or if memory is installed without the declared transcript (chat is then not recorded). Re-wiring keeps the entry's other env (a hand-set `EMBED_PROVIDER`/`EMBED_API_KEY`/`EMBED_MODEL` survives `init` and `update`); a `.mcp.json` that does not parse is reported and left untouched. Pre-seed the optional Telegram channel
+so the memory MCP server uses it — see [The embedder](#the-embedder)). When `@justfortytwo/transcript` is installed, `init` also lists it in `FORTYTWO_MCP_EXTENSIONS` on that `.mcp.json` entry (launching memory with `npx -y -p @justfortytwo/memory -p @justfortytwo/transcript fortytwo-memory` so both share one install), and `status`/`doctor` warn if the package, the env var and the `-p` launch args disagree, or if memory is installed without the declared transcript (chat is then not recorded). Re-wiring keeps the entry's other env (a hand-set `EMBED_PROVIDER`/`EMBED_API_KEY`/`EMBED_MODEL` survives `init` and `update`); a `.mcp.json` that does not parse is reported and left untouched. When the installed `@justfortytwo/scheduler` ships `fortytwo-scheduler-mcp`, `init` and `update` also write a `fortytwo-scheduler` entry (`npx -y -p @justfortytwo/scheduler fortytwo-scheduler-mcp`, same `DB_PATH`): the assistant's `enqueue_job`/`list_jobs`/`cancel_job` tools, so a "remind me at 5pm" lands in the durable job queue instead of a session-local cron. A scheduler without that bin gets no entry (one `init` wrote earlier is removed). `status` shows a `Job tools` line, and `status`/`doctor` warn when the entry is missing, points at a different database than memory, or is held by the safety gate. Pre-seed the optional Telegram channel
 with `--telegram-bot-token <token>` / `--allowed-chat-ids <ids>` (or the matching
 env vars) — secrets are written to the gitignored `.env`, never prompted.
 
@@ -150,7 +150,7 @@ yours to tune and are never overwritten:
 
 | File | What it decides |
 |---|---|
-| `.claude/policy/capabilities.toml` | Which tools run on their own. Reading, files in the project, skills and fortytwo's memory do; everything else, including any tool not listed, is held. |
+| `.claude/policy/capabilities.toml` | Which tools run on their own. Reading, files in the project, skills, fortytwo's memory and the scheduler's job tools (`mcp__fortytwo-scheduler__*`: they only write the local job queue, and each scheduled turn runs under the gate) do; everything else, including any tool not listed, is held. A manifest written before the job tools existed holds them; `doctor` names the line to add. |
 | `rules/bash-allowlist.jsonl` | The Bash commands that run without asking (a short read-only list). Every other command is held, and so is any command containing `;` `&` `\|` `<` `>` or a substitution. |
 
 The assistant cannot edit those files, `.claude/settings.json`, `.mcp.json`, `.env`,
