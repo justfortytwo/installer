@@ -122,10 +122,14 @@ describe('with the linked @justfortytwo/persona', () => {
   const here = dirname(fileURLToPath(import.meta.url));
   const personaDir = findSiblingDir('@justfortytwo/persona', here);
 
-  it.runIf(personaDir)('installs daily-briefing and learn-review, each marked as managed', () => {
+  it.runIf(personaDir)('installs daily-briefing, learn-review and onboarding, each marked as managed', () => {
     const root = tmp();
     const r = reconcileSkills(root, personaDir!);
-    expect(r.written.sort()).toEqual(['.claude/skills/daily-briefing/SKILL.md', '.claude/skills/learn-review/SKILL.md']);
+    expect(r.written.sort()).toEqual([
+      '.claude/skills/daily-briefing/SKILL.md',
+      '.claude/skills/learn-review/SKILL.md',
+      '.claude/skills/onboarding/SKILL.md',
+    ]);
     for (const f of r.written) expect(readFileSync(join(root, f), 'utf8'), f).toContain(MANAGED_MARKER);
   });
 });
