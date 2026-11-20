@@ -96,7 +96,7 @@ Each is a separate git repo under the `justfortytwo` org:
 - `memory`: the memory MCP server, DB migrations and embedder.
 - `persona`: `templates/` and `manifest.json`, consumed by `render.ts`.
 - `telegram`: the channel adapter and bindings store.
-- `scheduler`: the `fortytwo-scheduler` daemon and its heartbeat.
+- `scheduler`: the `fortytwo-scheduler` daemon and its heartbeat. It also owns the `jobs` table and the job API (`listActive`, `enqueue`, ...): code that opens the DB runs memory's `runMigrations` and then the scheduler's `runSchedulerMigrations` (init's `provision`, `reconcileOneiros`) before touching jobs.
 - `transcript`: the chat transcript store and memory MCP extension; chat moves here from memory.
 
 The workspace also contains `docs`, `marketplace`, `runner`, `salience` and `website`. The installer does not reference them directly.
