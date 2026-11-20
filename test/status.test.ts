@@ -3,7 +3,9 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { statusLines } from '../src/commands/status.js';
-import { extensionWiringProblems, readMcpExtensions, runDoctorChecks, type DoctorDeps } from '../src/commands/doctor.js';
+import {
+  extensionWiringProblems, readMcpExtensions, readSchedulerTools, runDoctorChecks, schedulerToolsProblems, type DoctorDeps,
+} from '../src/commands/doctor.js';
 
 const TRANSCRIPT = '@justfortytwo/transcript';
 const installed = (...names: string[]) => (spec: string) => (names.includes(spec) ? '1.0.0-0' : null);
@@ -149,5 +151,70 @@ describe('extension launch args (-p <ext>)', () => {
       writeFileSync(join(root, '.mcp.json'), JSON.stringify({ mcpServers: { 'fortytwo-memory': { args, env: { FORTYTWO_MCP_EXTENSIONS: TRANSCRIPT } } } }));
       expect(readMcpExtensions(root)).toEqual({ memoryEntry: true, extensions: [TRANSCRIPT], args });
     } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+});
+
+describe('scheduler job tools (scheduler#1)', () => {
+  const wired = { shipsMcp: true, entry: { own: true, dbPath: 'db/fortytwo.db' }, memoryDbPath: 'db/fortytwo.db', gateHoldsTools: false };
+
+  it('has no problems when wired on the memory DB', () => {
+    expect(schedulerToolsProblems(wired)).toEqual([]);
+    expect(schedulerToolsProblems(null)).toEqual([]);
+    expect(schedulerToolsProblems({ shipsMcp: false, entry: null, gateHoldsTools: false })).toEqual([]);
+  });
+
+  it('flags a missing entry, a bin the scheduler lacks, a different DB and a gate that holds the tools', () => {
+    expect(schedulerToolsProblems({ ...wired, entry: null })).toEqual([expect.stringMatching(/no fortytwo-scheduler entry/)]);
+    expect(schedulerToolsProblems({ ...wired, shipsMcp: false })).toEqual([expect.stringMatching(/does not ship it/)]);
+    expect(schedulerToolsProblems({ ...wired, entry: { own: true, dbPath: 'other.db' } })).toEqual([expect.stringMatching(/other\.db.*db\/fortytwo\.db/)]);
+    expect(schedulerToolsProblems({ ...wired, gateHoldsTools: true })).toEqual([expect.stringMatching(/"mcp__fortytwo-scheduler__\*" = "internal"/)]);
+  });
+
+  it('status shows a Job tools line and its warnings', () => {
+    const base = { runtime: null, schedulerHeartbeat: null, memoryConfigured: true, nowMs: 0 };
+    expect(statusLines({ ...base, schedulerTools: wired })).toContain('Job tools  configured via MCP (Claude Code starts it on demand)');
+    const lines = statusLines({ ...base, schedulerTools: { ...wired, entry: null } });
+    expect(lines).toContain('Job tools  not configured (run `fortytwo init` or `fortytwo update`)');
+    expect(lines.some((l) => l.startsWith('Warning') && l.includes('no fortytwo-scheduler entry'))).toBe(true);
+    expect(statusLines(base).some((l) => l.startsWith('Job tools'))).toBe(false);
+  });
+
+  it('doctor reports the check warn-only', async () => {
+    const deps: DoctorDeps = {
+      loadGate: async () => ({ POLICY_SCHEMA_VERSION: 1 }),
+      loadMemory: async () => ({ MEMORY_TOOL_CONTRACT_VERSION: 1 }),
+      installedVersion: () => null,
+      compatRanges: {},
+      ollamaModels: async () => ['m'],
+      embedModel: 'm',
+      migrationState: async () => 'ok',
+      schedulerHeartbeat: () => ({ pid: 1, ts: '2026-06-30T12:00:00.000Z' }),
+      now: () => '2026-06-30T12:00:10.000Z',
+      schedulerTools: () => ({ ...wired, entry: null }),
+    };
+    const run = await runDoctorChecks(deps);
+    expect(run.results.find((x) => x.name === 'scheduler tools')).toMatchObject({ ok: false, required: false });
+    expect(run.ok).toBe(true);
+    const fine = await runDoctorChecks({ ...deps, schedulerTools: () => wired });
+    expect(fine.results.find((x) => x.name === 'scheduler tools')).toMatchObject({ ok: true });
+  });
+
+  describe('readSchedulerTools', () => {
+    it('reads the entry, the memory DB and whether the gate manifest covers the tools', () => {
+      const root = mkdtempSync(join(tmpdir(), 'ft-schedtools-'));
+      try {
+        writeFileSync(join(root, '.mcp.json'), JSON.stringify({ mcpServers: {
+          'fortytwo-memory': { env: { DB_PATH: 'db/a.db' } },
+          'fortytwo-scheduler': { args: ['-y', '-p', '@justfortytwo/scheduler', 'fortytwo-scheduler-mcp'], env: { DB_PATH: 'db/b.db' } },
+        } }));
+        expect(readSchedulerTools(root)).toEqual({
+          shipsMcp: false, entry: { own: true, dbPath: 'db/b.db' }, memoryDbPath: 'db/a.db', gateHoldsTools: false,
+        });
+        writeFileSync(join(root, '.mcp.json'), '{ nope');
+        expect(readSchedulerTools(root)).toBeNull();
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
   });
 });

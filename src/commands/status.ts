@@ -3,14 +3,18 @@
 // Reads what already exists instead of searching for processes: the runtime
 // state `fortytwo start` keeps in .fortytwo/runtime.json (Telegram bridge), the
 // scheduler's own heartbeat file (so a scheduler run by hand shows up too), and
-// .mcp.json for memory, which Claude Code itself starts on demand.
+// .mcp.json for memory and the scheduler's job tools, which Claude Code itself
+// starts on demand.
 // Exit code: 0 when `fortytwo start` is running, 3 when it is not (LSB "not
 // running"), so `fortytwo status` works as a container health check.
 
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { liveRuntime, serviceRunning, type RuntimeState } from '../runtime.js';
-import { defaultDoctorDeps, extensionWiringProblems, readMcpExtensions, HEARTBEAT_STALE_MS } from './doctor.js';
+import {
+  defaultDoctorDeps, extensionWiringProblems, readMcpExtensions, readSchedulerTools, schedulerToolsProblems,
+  HEARTBEAT_STALE_MS, type SchedulerToolsState,
+} from './doctor.js';
 import { readInstalledVersion, readSelfCompatRanges } from '../engine.js';
 
 export interface StatusInput {
@@ -19,6 +23,8 @@ export interface StatusInput {
   memoryConfigured: boolean;
   /** MCP extension wiring problems (see extensionWiringProblems); each becomes a Warning line. */
   extensionProblems?: string[];
+  /** The scheduler's job-tools wiring; omitted = no line. Its problems become Warning lines. */
+  schedulerTools?: SchedulerToolsState | null;
   nowMs: number;
 }
 
@@ -40,7 +46,13 @@ export function statusLines(i: StatusInput): string[] {
     : 'not running'));
 
   lines.push(row('Memory', i.memoryConfigured ? 'configured via MCP (Claude Code starts it on demand)' : 'not configured (run `fortytwo init`)'));
-  for (const p of i.extensionProblems ?? []) lines.push(row('Warning', p));
+  const st = i.schedulerTools;
+  if (st) {
+    lines.push(row('Job tools', st.entry ? 'configured via MCP (Claude Code starts it on demand)'
+      : st.shipsMcp ? 'not configured (run `fortytwo init` or `fortytwo update`)'
+      : 'not available (the installed scheduler does not ship them)'));
+  }
+  for (const p of [...(i.extensionProblems ?? []), ...schedulerToolsProblems(st ?? null)]) lines.push(row('Warning', p));
   return lines;
 }
 
@@ -63,6 +75,7 @@ export async function runStatus(_argv: string[]): Promise<number> {
     schedulerHeartbeat: defaultDoctorDeps().schedulerHeartbeat(),
     memoryConfigured: memoryConfigured(root),
     extensionProblems: extensionWiringProblems(readMcpExtensions(root), (s) => readInstalledVersion(s, root), readSelfCompatRanges()),
+    schedulerTools: readSchedulerTools(root),
     nowMs: Date.now(),
   });
   process.stdout.write(lines.join('\n') + '\n');
