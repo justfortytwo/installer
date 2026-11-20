@@ -28,7 +28,7 @@ import { loadPersonaManifest, renderPersona, type PersonaManifestField, type Ren
 import { loadSibling } from '../engine.js';
 import { DEFAULT_DB_PATH, readMcpJson, readProjectSetting } from './init.js';
 import {
-  DEFAULT_DRAFT_PATH, PROFILE_TAG, applySummary, diffProfile, existingFactsFromRows, factToMemory, formatChange,
+  DEFAULT_DRAFT_PATH, PROFILE_TAG, applySummary, escapeForTerminal, diffProfile, existingFactsFromRows, factToMemory, formatChange,
   parseDraft, type ExistingFact, type FactClaim, type ProfileChange, type SummaryClaim,
 } from '../onboard.js';
 
@@ -116,7 +116,10 @@ export async function performOnboard(deps: OnboardDeps, flags: OnboardFlags): Pr
   try {
     raw = deps.readDraft(flags.draft);
   } catch (e) {
-    deps.err(`onboard: ${flags.draft} is not valid JSON (${(e as Error).message}); nothing saved.\n`);
+    // Never echo the parser's message: newer Node versions quote a slice of the
+    // (untrusted) draft in it. The character position is enough to find the error.
+    const pos = /position (\d+)/.exec((e as Error).message)?.[1];
+    deps.err(`onboard: ${flags.draft} is not valid JSON${pos !== undefined ? ` (at character ${pos})` : ''}; nothing saved.\n`);
     return 2;
   }
   if (raw === null) {
@@ -132,7 +135,7 @@ export async function performOnboard(deps: OnboardDeps, flags: OnboardFlags): Pr
   }
   const parsed = parseDraft(raw, fields);
   if (!parsed.draft) {
-    deps.err(`onboard: the draft was rejected; nothing saved:\n${parsed.errors.map((e) => `  - ${e}\n`).join('')}`);
+    deps.err(`onboard: the draft was rejected; nothing saved:\n${parsed.errors.map((e) => `  - ${escapeForTerminal(e)}\n`).join('')}`);
     return 2;
   }
   const draft = parsed.draft;
@@ -157,7 +160,7 @@ export async function performOnboard(deps: OnboardDeps, flags: OnboardFlags): Pr
       } catch (e) {
         await m.close();
         pendingFacts = draft.facts.length;
-        deps.out(`! memory could not be read (${(e as Error).message}).\n`);
+        deps.out(`! memory could not be read (${escapeForTerminal((e as Error).message)}).\n`);
       }
     }
     if (!memory) {
@@ -213,7 +216,7 @@ export async function performOnboard(deps: OnboardDeps, flags: OnboardFlags): Pr
           await memory.store(c.claim, c.supersedes);
           saved++;
         } catch (e) {
-          deps.out(`! memory refused a fact (${(e as Error).message}); ${facts.length - saved} fact(s) not saved. The draft is kept: re-run \`fortytwo onboard\` once memory is reachable.\n`);
+          deps.out(`! memory refused a fact (${escapeForTerminal((e as Error).message)}); ${facts.length - saved} fact(s) not saved. The draft is kept: re-run \`fortytwo onboard\` once memory is reachable.\n`);
           code = 1;
           break;
         }
