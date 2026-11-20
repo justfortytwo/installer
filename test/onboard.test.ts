@@ -186,7 +186,7 @@ function harness(opts: {
   draft?: unknown;
   answers?: Record<string, string | string[]>;
   ask?: string[];
-  memory?: 'ok' | 'unavailable' | 'store-fails';
+  memory?: 'ok' | 'unavailable' | 'store-fails' | 'open-throws';
   existing?: { id: number; key: string; content: string }[];
 } = {}): Harness {
   let out = '';
@@ -213,7 +213,10 @@ function harness(opts: {
     writeIdentity: (i) => { identity = i; },
     fields: () => FIELDS,
     render: () => { h.renders++; return { written: ['CLAUDE.md'], skipped: ['context/PROFILE.md'] }; },
-    memory: async () => (opts.memory === 'unavailable' ? { unavailable: 'memory is not installed' } : memory),
+    memory: async () => {
+      if (opts.memory === 'open-throws') throw new Error('native module mismatch');
+      return opts.memory === 'unavailable' ? { unavailable: 'memory is not installed' } : memory;
+    },
     ...(opts.ask ? { ask: async () => answers.shift() ?? '' } : {}),
     out: (s) => { out += s; },
     err: (s) => { err += s; },
@@ -279,6 +282,14 @@ describe('performOnboard', () => {
     expect(h.out()).not.toMatch(/\[memory\]/);
   });
 
+  it('a memory that throws while opening counts as offline: the summary still saves, exits 1', async () => {
+    const h = harness({ ask: ['y'], memory: 'open-throws' });
+    expect(await performOnboard(h.deps, { draft: 'd' })).toBe(1);
+    expect(h.identity()?.answers.owner_role).toBe('Founder of a small studio');
+    expect(h.out()).toMatch(/memory could not be opened \(native module mismatch\)/);
+    expect(h.out()).toMatch(/2 deep-profile fact\(s\) left in the draft/);
+  });
+
   it('reports an embedder failure mid-save and exits 1', async () => {
     const h = harness({ ask: ['y'], memory: 'store-fails' });
     expect(await performOnboard(h.deps, { draft: 'd' })).toBe(1);
@@ -312,6 +323,19 @@ describe('openProfileMemory (integration: real @justfortytwo/memory, FakeEmbedde
     linkEngineInto(dir);
     const m = await openProfileMemory(dir);
     expect('unavailable' in m && m.unavailable).toMatch(/does not exist/);
+  });
+
+  it('reports a bad embedder setting as unavailable instead of throwing', async () => {
+    linkEngineInto(dir);
+    const mem = (await import('@justfortytwo/memory')) as any;
+    mkdirSync(join(dir, 'db'));
+    const h = mem.openDb(join(dir, 'db', 'fortytwo.db'));
+    await mem.runMigrations(h.k);
+    await h.k.destroy();
+    h.raw.close();
+    writeFileSync(join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { 'fortytwo-memory': { env: { DB_PATH: 'db/fortytwo.db', EMBED_PROVIDER: 'nope' } } } }));
+    const m = await openProfileMemory(dir);
+    expect('unavailable' in m && m.unavailable).toMatch(/memory could not be opened \(Unknown EMBED_PROVIDER/);
   });
 
   it('stores tagged facts, finds them on a re-run, and supersedes a changed one', async () => {
