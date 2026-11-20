@@ -11,6 +11,8 @@ interface Memory {
 }
 interface Persona { initialize(root: string, head: Cursor): void }
 interface Scheduler {
+  // The jobs table (migration 004_jobs) is the scheduler's; older schedulers left it to memory.
+  runSchedulerMigrations?(k: unknown): Promise<void>;
   seedOneiros(h: Handle, now: string, next: (cron: string, now: string) => string): void;
   recurrenceNext(cron: string, now: string): string;
 }
@@ -26,6 +28,8 @@ export async function reconcileOneiros(root: string, dbPath: string): Promise<vo
   const h = memory.openDb(path);
   try {
     await memory.runMigrations(h.k);
+    // seedOneiros writes to the jobs table, so create it before seeding.
+    await scheduler.runSchedulerMigrations?.(h.k);
     persona.initialize(root,memory.memoryHead(h));
     scheduler.seedOneiros(h,new Date().toISOString(),scheduler.recurrenceNext);
   } finally { await h.k.destroy(); h.raw.close(); }

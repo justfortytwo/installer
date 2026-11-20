@@ -70,9 +70,10 @@ describe('e2e: init -> doctor -> store/recall', () => {
     const checkpoint = JSON.parse(readFileSync(join(dir, '.fortytwo/oneiros/checkpoint.json'), 'utf8'));
     expect(checkpoint.position).toBe(0);
     const memory: any = await loadSibling('@justfortytwo/memory', dir);
+    const scheduler: any = await loadSibling('@justfortytwo/scheduler', dir);
     const h = memory.openDb(join(dir, 'db/fortytwo.db'));
     try {
-      const jobs = memory.listActive(h).filter((j: any) => j.kind === 'persona.oneiros');
+      const jobs = scheduler.listActive(h).filter((j: any) => j.kind === 'persona.oneiros');
       expect(jobs).toHaveLength(1);
       expect(jobs[0]).toMatchObject({ recurrence: '17 3 * * *', payload: null, status: 'pending' });
     } finally { await h.k.destroy(); h.raw.close(); }
@@ -282,7 +283,7 @@ describe('e2e: built-in schedules and shipped skills', () => {
     (await scheduler.startDaemon({ dbPath, root: dir, registry: scheduler.createRegistry([]) }))();
     const h = memory.openDb(dbPath);
     try {
-      const builtin = memory.listActive(h).map((j: any) => j.kind).filter((k: string) => k !== 'persona.oneiros');
+      const builtin = scheduler.listActive(h).map((j: any) => j.kind).filter((k: string) => k !== 'persona.oneiros');
       expect(builtin).toEqual(['sweep']);
     } finally { await h.k.destroy(); h.raw.close(); }
   });
