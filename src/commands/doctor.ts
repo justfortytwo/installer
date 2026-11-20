@@ -11,14 +11,17 @@
 // and memory's MEMORY_TOOL_CONTRACT_VERSION must equal what this CLI was built
 // against, and installed siblings must satisfy the declared compat ranges.
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
-  loadGate, loadMemory, readInstalledVersion, readSelfCompatRanges,
+  loadGate, loadMemory, readInstalledVersion, readSelfCompatRanges, siblingHasBin,
   satisfiesRange, fetchOllamaModels, readMigrationState, type MigrationState,
 } from '../engine.js';
 import { gateState, MANIFEST_FILE, type GateState } from '../gate.js';
-import { EMBED_MODEL, DEFAULT_OLLAMA_BASE_URL, DEFAULT_DB_PATH, readProjectSetting } from './init.js';
+import {
+  EMBED_MODEL, DEFAULT_OLLAMA_BASE_URL, DEFAULT_DB_PATH, readProjectSetting,
+  SCHEDULER_MCP_BIN, SCHEDULER_MCP_SERVER, SCHEDULER_PACKAGE, isOwnSchedulerEntry,
+} from './init.js';
 
 // The contract versions this CLI was authored against. A sibling advertising a
 // different MAJOR has broken the contract — doctor must flag it loudly.
@@ -60,6 +63,69 @@ export interface DoctorDeps {
   mcpExtensions?: () => McpExtensionState | null;
   /** Whether the optional gate hook is wired, and with what; omitted = check skipped. */
   gate?: () => GateState;
+  /** The scheduler's job-tools wiring; omitted = check skipped. */
+  schedulerTools?: () => SchedulerToolsState | null;
+}
+
+/** What the project says about the scheduler's job tools (`fortytwo-scheduler-mcp`). */
+export interface SchedulerToolsState {
+  /** The installed scheduler ships the MCP bin. */
+  shipsMcp: boolean;
+  /** The `fortytwo-scheduler` entry in .mcp.json, when there is one. */
+  entry: { own: boolean; dbPath?: string } | null;
+  /** DB_PATH of the `fortytwo-memory` entry, the database the job tools must share. */
+  memoryDbPath?: string;
+  /** The gate is on and its manifest has no rule for these tools, so every call is held. */
+  gateHoldsTools: boolean;
+}
+
+/** Tier rule in a capability manifest that covers `mcp__fortytwo-scheduler__*` calls. */
+const SCHEDULER_TOOLS_RULE = /^"mcp__(?:fortytwo-scheduler__)?\*"\s*=|^"mcp__fortytwo-scheduler__/m;
+
+/** Read the job-tools state; null when .mcp.json is missing or unreadable. */
+export function readSchedulerTools(root: string = process.cwd()): SchedulerToolsState | null {
+  let servers: Record<string, { env?: Record<string, unknown> } | undefined>;
+  try {
+    const cfg = JSON.parse(readFileSync(join(root, '.mcp.json'), 'utf8')) as { mcpServers?: typeof servers };
+    servers = cfg.mcpServers ?? {};
+  } catch {
+    return null;
+  }
+  const sched = servers[SCHEDULER_MCP_SERVER];
+  const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
+  const schedDb = str(sched?.env?.DB_PATH);
+  const memDb = str(servers['fortytwo-memory']?.env?.DB_PATH);
+  let gateHoldsTools = false;
+  if (gateState(root).hook !== null && existsSync(join(root, MANIFEST_FILE))) {
+    try {
+      gateHoldsTools = !SCHEDULER_TOOLS_RULE.test(readFileSync(join(root, MANIFEST_FILE), 'utf8'));
+    } catch { /* unreadable manifest: the gate check reports it */ }
+  }
+  return {
+    shipsMcp: siblingHasBin(SCHEDULER_PACKAGE, SCHEDULER_MCP_BIN, root),
+    entry: sched ? { own: isOwnSchedulerEntry(sched), ...(schedDb !== undefined ? { dbPath: schedDb } : {}) } : null,
+    ...(memDb !== undefined ? { memoryDbPath: memDb } : {}),
+    gateHoldsTools,
+  };
+}
+
+/** Problems with the job-tools wiring (pure; every problem is warn-only). */
+export function schedulerToolsProblems(s: SchedulerToolsState | null): string[] {
+  if (!s) return [];
+  const problems: string[] = [];
+  if (s.shipsMcp && !s.entry) {
+    problems.push(`${SCHEDULER_PACKAGE} ships ${SCHEDULER_MCP_BIN}, but .mcp.json has no ${SCHEDULER_MCP_SERVER} entry: the assistant cannot schedule reminders (re-run \`fortytwo init\` or \`fortytwo update\`)`);
+  }
+  if (s.entry?.own && !s.shipsMcp) {
+    problems.push(`.mcp.json launches ${SCHEDULER_MCP_BIN}, but the installed ${SCHEDULER_PACKAGE} does not ship it (run \`fortytwo update\`)`);
+  }
+  if (s.entry && s.memoryDbPath !== undefined && s.entry.dbPath !== s.memoryDbPath) {
+    problems.push(`${SCHEDULER_MCP_SERVER} uses DB_PATH ${s.entry.dbPath ?? '(unset)'} but fortytwo-memory uses ${s.memoryDbPath}: reminders would go to a database the daemon does not read`);
+  }
+  if (s.entry && s.gateHoldsTools) {
+    problems.push(`the safety gate holds every ${SCHEDULER_MCP_SERVER} call: add \`"mcp__${SCHEDULER_MCP_SERVER}__*" = "internal"\` under [tiers] in ${MANIFEST_FILE}`);
+  }
+  return problems;
 }
 
 /** What .mcp.json says about the memory server's extensions. */
@@ -131,6 +197,16 @@ async function checkMcpExtensions(deps: DoctorDeps): Promise<CheckResult> {
   const problems = extensionWiringProblems(deps.mcpExtensions?.() ?? null, deps.installedVersion, deps.compatRanges);
   if (problems.length > 0) return { name, ok: false, required: false, detail: problems.join('; ') };
   return { name, ok: true, required: false, detail: 'MCP extensions consistent with installed packages' };
+}
+
+async function checkSchedulerTools(deps: DoctorDeps): Promise<CheckResult> {
+  // Warn-only: without the job tools the assistant cannot schedule, but nothing else breaks.
+  const name = 'scheduler tools';
+  const state = deps.schedulerTools?.() ?? null;
+  const problems = schedulerToolsProblems(state);
+  if (problems.length > 0) return { name, ok: false, required: false, detail: problems.join('; ') };
+  if (state?.entry) return { name, ok: true, required: false, detail: `${SCHEDULER_MCP_SERVER} job tools wired in .mcp.json` };
+  return { name, ok: true, required: false, detail: 'job tools not wired (the installed scheduler does not ship them)' };
 }
 
 async function checkGate(deps: DoctorDeps): Promise<CheckResult> {
@@ -252,6 +328,7 @@ export async function runDoctorChecks(deps: DoctorDeps): Promise<{ results: Chec
     checkMigrations(deps),
     checkSchedulerHeartbeat(deps),
     checkMcpExtensions(deps),
+    checkSchedulerTools(deps),
     checkSafetyGate(deps),
   ]);
   const ok = results.every((r) => r.ok || !r.required);
@@ -286,6 +363,7 @@ export function defaultDoctorDeps(): DoctorDeps {
     now: () => new Date().toISOString(),
     mcpExtensions: () => readMcpExtensions(),
     gate: () => gateState(process.cwd()),
+    schedulerTools: () => readSchedulerTools(),
   };
 }
 
