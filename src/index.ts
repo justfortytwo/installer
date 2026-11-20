@@ -23,6 +23,7 @@ import { runDoctor } from './commands/doctor.js';
 import { runUpdate } from './commands/update.js';
 import { runRollback } from './commands/rollback.js';
 import { runEnrich } from './commands/enrich.js';
+import { runOnboard } from './commands/onboard.js';
 import { runForget } from './commands/forget.js';
 import { runUnbind } from './commands/unbind.js';
 import { runStart } from './commands/start.js';
@@ -39,6 +40,7 @@ export type Verb =
   | 'update'
   | 'rollback'
   | 'enrich'
+  | 'onboard'
   | 'forget'
   | 'unbind'
   | 'start'
@@ -72,6 +74,8 @@ Verbs:
               rollback on failure.
   rollback    Restore the prior version set recorded in .fortytwo/state.json.
   enrich      Deepen the persona by capturing more answers; re-render (no clobber).
+  onboard     Review the owner profile drafted by the assistant's onboarding
+              interview, confirm what to save (persona summary + memory facts).
   forget      Redact/remove specific memories from the memory MCP store.
   unbind      Revoke a channel binding (un-pair a chat / drop the allowlist entry).
 
@@ -86,7 +90,7 @@ the version of the CLI this project runs.
 export function resolveVerb(argv: string[], invokedAs: string): Verb | 'help' | 'version' | null {
   const first = argv[0];
   if (first === '--version' || first === '-v' || first === 'version') return 'version';
-  const verbs: Verb[] = ['init', 'start', 'stop', 'status', 'pair', 'doctor', 'update', 'rollback', 'enrich', 'forget', 'unbind', 'schedules', 'gate'];
+  const verbs: Verb[] = ['init', 'start', 'stop', 'status', 'pair', 'doctor', 'update', 'rollback', 'enrich', 'onboard', 'forget', 'unbind', 'schedules', 'gate'];
   if (first && (verbs as string[]).includes(first)) return first as Verb;
   if (!first || first === '--help' || first === '-h' || first === 'help') {
     // `create-fortytwo` with no verb implies init; otherwise show help.
@@ -107,6 +111,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     case 'update':   return runUpdate(rest);
     case 'rollback': return runRollback(rest);
     case 'enrich':   return runEnrich(rest);
+    case 'onboard':  return runOnboard(rest);
     case 'forget':   return runForget(rest);
     case 'unbind':   return runUnbind(rest);
     case 'start':    return runStart(rest);
