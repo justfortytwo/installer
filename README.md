@@ -150,7 +150,7 @@ yours to tune and are never overwritten:
 
 | File | What it decides |
 |---|---|
-| `.claude/policy/capabilities.toml` | Which tools run on their own. Reading, files in the project, skills, fortytwo's memory and the scheduler's job tools (`mcp__fortytwo-scheduler__*`: they only write the local job queue, and each scheduled turn runs under the gate) do; everything else, including any tool not listed, is held. A manifest written before the job tools existed holds them; `doctor` names the line to add. |
+| `.claude/policy/capabilities.toml` | Which tools run on their own. Reading, files in the project, skills, fortytwo's memory, and listing and creating reminders (`mcp__fortytwo-scheduler__list_jobs` and `__enqueue_job`: they only write the local job queue, and each scheduled turn runs under the gate) do. Cancelling a reminder (`__cancel_job`) waits for your approval. Everything else, including any tool not listed, is held. A manifest written before the job tools existed holds them; `doctor` names the lines to add. |
 | `rules/bash-allowlist.jsonl` | The Bash commands that run without asking (a short read-only list). Every other command is held, and so is any command containing `;` `&` `\|` `<` `>` or a substitution. |
 
 The assistant cannot edit those files, `.claude/settings.json`, `.mcp.json`, `.env`,

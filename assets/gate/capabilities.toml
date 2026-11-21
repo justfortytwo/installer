@@ -40,8 +40,14 @@ default_tier = "external"
 # --- fortytwo memory and conversation log (local database) ---
 "mcp__fortytwo-memory__*" = "internal"
 # --- fortytwo scheduler job tools: reminders on the local job queue ---
-# They only write the local database; each scheduled turn runs under this gate.
-"mcp__fortytwo-scheduler__*" = "internal"
+# Named one by one, so a tool the scheduler adds later is held until you tier it.
+# Listing and creating reminders only write the local database, are capped by the
+# scheduler (reminders only, length, frequency, count), and each scheduled turn
+# runs under this gate. Cancelling removes something you asked for, so it waits
+# for your approval: text read from a web page cannot quietly drop a reminder.
+"mcp__fortytwo-scheduler__list_jobs" = "internal"
+"mcp__fortytwo-scheduler__enqueue_job" = "internal"
+"mcp__fortytwo-scheduler__cancel_job" = "irreversible"
 # Bash fails CLOSED: its base tier is external, so a command runs on its own only
 # when rules/bash-allowlist.jsonl lists it. The [bash] patterns below only raise
 # the tier, and a command matching ANY of them can never be allowlisted.
