@@ -167,7 +167,7 @@ describe('scheduler job tools (scheduler#1)', () => {
     expect(schedulerToolsProblems({ ...wired, entry: null })).toEqual([expect.stringMatching(/no fortytwo-scheduler entry/)]);
     expect(schedulerToolsProblems({ ...wired, shipsMcp: false })).toEqual([expect.stringMatching(/does not ship it/)]);
     expect(schedulerToolsProblems({ ...wired, entry: { own: true, dbPath: 'other.db' } })).toEqual([expect.stringMatching(/other\.db.*db\/fortytwo\.db/)]);
-    expect(schedulerToolsProblems({ ...wired, gateHoldsTools: true })).toEqual([expect.stringMatching(/"mcp__fortytwo-scheduler__\*" = "internal"/)]);
+    expect(schedulerToolsProblems({ ...wired, gateHoldsTools: true })).toEqual([expect.stringMatching(/"mcp__fortytwo-scheduler__enqueue_job" = "internal"/)]);
   });
 
   it('status shows a Job tools line and its warnings', () => {

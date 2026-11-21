@@ -75,12 +75,15 @@ export interface SchedulerToolsState {
   entry: { own: boolean; dbPath?: string } | null;
   /** DB_PATH of the `fortytwo-memory` entry, the database the job tools must share. */
   memoryDbPath?: string;
-  /** The gate is on and its manifest has no rule for these tools, so every call is held. */
+  /** The gate is on and its manifest has no rule for creating reminders, so every such call is held. */
   gateHoldsTools: boolean;
 }
 
-/** Tier rule in a capability manifest that covers `mcp__fortytwo-scheduler__*` calls. */
-const SCHEDULER_TOOLS_RULE = /^"mcp__(?:fortytwo-scheduler__)?\*"\s*=|^"mcp__fortytwo-scheduler__/m;
+/**
+ * Tier rule in a capability manifest that covers creating reminders: the named
+ * `enqueue_job` rule the shipped manifest uses, or a hand-written wildcard.
+ */
+const SCHEDULER_TOOLS_RULE = /^"mcp__(?:fortytwo-scheduler__)?\*"\s*=|^"mcp__fortytwo-scheduler__enqueue_job"\s*=/m;
 
 /** Read the job-tools state; null when .mcp.json is missing or unreadable. */
 export function readSchedulerTools(root: string = process.cwd()): SchedulerToolsState | null {
@@ -123,7 +126,7 @@ export function schedulerToolsProblems(s: SchedulerToolsState | null): string[] 
     problems.push(`${SCHEDULER_MCP_SERVER} uses DB_PATH ${s.entry.dbPath ?? '(unset)'} but fortytwo-memory uses ${s.memoryDbPath}: reminders would go to a database the daemon does not read`);
   }
   if (s.entry && s.gateHoldsTools) {
-    problems.push(`the safety gate holds every ${SCHEDULER_MCP_SERVER} call: add \`"mcp__${SCHEDULER_MCP_SERVER}__*" = "internal"\` under [tiers] in ${MANIFEST_FILE}`);
+    problems.push(`the safety gate holds every ${SCHEDULER_MCP_SERVER} call: add \`"mcp__${SCHEDULER_MCP_SERVER}__list_jobs" = "internal"\` and \`"mcp__${SCHEDULER_MCP_SERVER}__enqueue_job" = "internal"\` under [tiers] in ${MANIFEST_FILE}`);
   }
   return problems;
 }

@@ -136,7 +136,10 @@ describe('shipped policy', () => {
     expect(manifest).toMatch(/^default_tier = "external"$/m);
     expect(manifest).toMatch(/^"Bash" = "external"$/m);
     expect(manifest).toMatch(/^"mcp__fortytwo-memory__\*" = "internal"$/m);
-    expect(manifest).toMatch(/^"mcp__fortytwo-scheduler__\*" = "internal"$/m);
+    expect(manifest).toMatch(/^"mcp__fortytwo-scheduler__list_jobs" = "internal"$/m);
+    expect(manifest).toMatch(/^"mcp__fortytwo-scheduler__enqueue_job" = "internal"$/m);
+    expect(manifest).toMatch(/^"mcp__fortytwo-scheduler__cancel_job" = "irreversible"$/m);
+    expect(manifest).not.toMatch(/^"mcp__fortytwo-scheduler__\*"/m);
     expect(manifest).toMatch(/^"Skill" = "internal"$/m);
     for (const f of [SETTINGS_FILE, '.claude/policy/', ALLOWLIST_FILE, '.gate/', '.mcp.json', '.env', 'state/', 'node_modules/', '.git', '.git/']) {
       expect(manifest).toContain(`"${f}",`);
