@@ -462,10 +462,10 @@ describe('declared engine compat', () => {
     expect(engineInstallSpecs(compat, () => false)).toContain('@justfortytwo/telegram@1.1.0');
     expect(Object.keys(compat)).not.toContain('@justfortytwo/runner');
   });
-  it('declares @justfortytwo/transcript (^1.0.0) so init installs and wires it', () => {
+  it('declares @justfortytwo/transcript (^1.0.1, accepts memory 2.x) so init installs and wires it', () => {
     const compat = readSelfCompatRanges();
-    expect(compat['@justfortytwo/transcript']).toBe('^1.0.0');
-    expect(engineInstallSpecs(compat, () => false)).toContain('@justfortytwo/transcript@^1.0.0');
+    expect(compat['@justfortytwo/transcript']).toBe('^1.0.1');
+    expect(engineInstallSpecs(compat, () => false)).toContain('@justfortytwo/transcript@^1.0.1');
   });
   it('pins scheduler to the exact 2.0.0 release that owns the jobs queue', () => {
     expect(readSelfCompatRanges()['@justfortytwo/scheduler']).toBe('2.0.0');
@@ -473,8 +473,8 @@ describe('declared engine compat', () => {
   it('pins memory to the exact 2.0.0 release (jobs queue handed to the scheduler)', () => {
     expect(readSelfCompatRanges()['@justfortytwo/memory']).toBe('2.0.0');
   });
-  it('pins persona to the exact 1.0.2 release with Oneiros', () => {
-    expect(readSelfCompatRanges()['@justfortytwo/persona']).toBe('1.0.2');
+  it('pins persona to the exact 1.1.0 release with the onboarding skill', () => {
+    expect(readSelfCompatRanges()['@justfortytwo/persona']).toBe('1.1.0');
   });
   it('keeps fortytwo.compat the only engine version list (no deps/peerDeps on @justfortytwo/*)', () => {
     const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as Record<
