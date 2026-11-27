@@ -73,8 +73,9 @@ Verbs:
   update      Resolve latest-in-range, install, run doctor, report. Points to
               rollback on failure.
   rollback    Restore the prior version set recorded in .fortytwo/state.json.
-  enrich      Ask for the persona fields still empty (--all: every field), save them,
-              re-render (files you already have under context/ are kept).
+  enrich      List the persona fields still empty, by topic, and re-render (a file you
+              moved aside under context/ is written again). Fill them by asking the
+              assistant "help me fill in my profile". --answers <file.json> saves values.
   onboard     Review the owner profile drafted by the assistant's onboarding
               interview, confirm what to save (persona summary + memory facts).
   forget      Redact/remove specific memories from the memory MCP store.
