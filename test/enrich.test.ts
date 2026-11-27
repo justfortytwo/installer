@@ -206,7 +206,7 @@ describe('renderReport', () => {
     const regenerated: EnrichRender = { written: ['CLAUDE.md', 'context/memory/owner-profile.md'], skipped: [], changed: ['context/memory/owner-profile.md'] };
     expect(renderReport(regenerated, refs, ['owner_email', 'owner_x'])).toEqual([
       '✓ persona files updated: context/memory/owner-profile.md',
-      '! owner_x is not used by any persona file',
+      '  owner_x: saved in .fortytwo/identity.json only (by design, no persona file shows it)',
     ]);
   });
 
@@ -392,7 +392,7 @@ describe('enrich against the real persona (sandbox)', () => {
     expect(readFileSync(capturedPath, 'utf8')).toBe('my own edits\n');
     expect(out).toContain('+ owner_email: grace@example.org');
     // The persona manifest asks for owner_email but no template renders it.
-    expect(out).toContain('! owner_email is not used by any persona file');
+    expect(out).toContain('owner_email: saved in .fortytwo/identity.json only (by design, no persona file shows it)');
     expect(out).not.toContain(captured.output);
     expect(out).not.toMatch(/written/);
     for (const f of manifest.files.filter((x) => x.mode === 'managed')) expect(existsSync(join(dir, f.output))).toBe(true);
