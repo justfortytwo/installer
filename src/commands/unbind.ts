@@ -67,12 +67,17 @@ type TgStoreModule = { SqliteBindingStore?: new (dbPath: string) => PairedChatSt
  * no file means nothing was ever paired. Returns null when the db exists but
  * @justfortytwo/telegram is not installed to read it.
  */
-async function revokeInBindingsDb(root: string, sel: { chatId?: string; all?: boolean }): Promise<string[] | null> {
+async function revokeInBindingsDb(
+  root: string,
+  sel: { chatId?: string; all?: boolean },
+): Promise<{ ids: string[]; codesCleared: boolean } | null> {
   const dbPath = resolveBindingsDbPath(root);
-  if (!existsSync(dbPath)) return [];
+  if (!existsSync(dbPath)) return { ids: [], codesCleared: false };
   const tg = (await loadTelegram()) as unknown as TgStoreModule | null;
   if (!tg || typeof tg.SqliteBindingStore !== 'function') return null;
-  return revokePairedChats(new tg.SqliteBindingStore(dbPath), sel);
+  const store = new tg.SqliteBindingStore(dbPath);
+  const ids = revokePairedChats(store, sel);
+  return { ids, codesCleared: sel.all === true && typeof store.sweepChallenges === 'function' };
 }
 
 /** Ids in ALLOWED_CHAT_IDS (shell env, else the project's .env), comma-separated. */
@@ -108,7 +113,9 @@ export async function runUnbind(argv: string[]): Promise<number> {
   if (removed.length) writeIdentity({ ...identity, channels: kept }, root);
 
   const telegramSelected = !flags.channel || flags.channel === 'telegram';
-  const revoked = telegramSelected ? await revokeInBindingsDb(root, flags) : [];
+  const outcome = telegramSelected ? await revokeInBindingsDb(root, flags) : { ids: [], codesCleared: false };
+  const revoked = outcome?.ids ?? null;
+  const codesCleared = outcome?.codesCleared === true;
   if (revoked === null) {
     process.stderr.write('unbind: the Telegram bindings db exists but @justfortytwo/telegram is not installed, so paired chats were not revoked.\n');
   }
@@ -121,7 +128,7 @@ export async function runUnbind(argv: string[]): Promise<number> {
     .filter((id) => flags.all === true || unbound.has(id));
   const refused = (revoked ?? []).filter((id) => !stillAllowed.includes(id));
 
-  if (removed.length === 0 && !revoked?.length && stillAllowed.length === 0) {
+  if (removed.length === 0 && !revoked?.length && stillAllowed.length === 0 && !codesCleared) {
     process.stdout.write('unbind: no matching binding found; nothing changed.\n');
     return revoked === null ? 1 : 0;
   }
@@ -133,6 +140,7 @@ export async function runUnbind(argv: string[]): Promise<number> {
   if (keptByAllowlist.length) {
     process.stdout.write(`✓ removed the pairing for ${keptByAllowlist.join(', ')}\n`);
   }
+  if (codesCleared) process.stdout.write('✓ cancelled any unused pairing codes\n');
   if (stillAllowed.length) {
     process.stdout.write(`  ${stillAllowed.join(', ')} ${stillAllowed.length === 1 ? 'is' : 'are'} still in ALLOWED_CHAT_IDS and keep${stillAllowed.length === 1 ? 's' : ''} access: remove ${stillAllowed.length === 1 ? 'it' : 'them'} from .env and restart fortytwo.\n`);
   }
