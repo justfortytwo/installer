@@ -255,7 +255,7 @@ export function renderReport(r: EnrichRender, refs: TemplateRef[], changedKeys: 
     const using = refs.filter((f) => f.keys.includes(key));
     const kept = using.filter((f) => f.mode === 'captured' && r.skipped.includes(f.output)).map((f) => f.output);
     if (using.length === 0) {
-      lines.push(`! ${key} is not used by any persona file`);
+      lines.push(`  ${key}: saved in .fortytwo/identity.json only (by design, no persona file shows it)`);
     } else if (kept.length > 0) {
       const onlyThere = kept.length === using.length;
       const one = kept.length === 1;
