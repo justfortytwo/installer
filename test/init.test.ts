@@ -467,8 +467,8 @@ describe('declared engine compat', () => {
     expect(compat['@justfortytwo/transcript']).toBe('^1.0.1');
     expect(engineInstallSpecs(compat, () => false)).toContain('@justfortytwo/transcript@^1.0.1');
   });
-  it('pins scheduler to the exact 2.1.1 release (owns the jobs queue; turn time limit)', () => {
-    expect(readSelfCompatRanges()['@justfortytwo/scheduler']).toBe('2.1.1');
+  it('pins scheduler to the exact 2.1.2 release (owns the jobs queue; persona as a range)', () => {
+    expect(readSelfCompatRanges()['@justfortytwo/scheduler']).toBe('2.1.2');
   });
   it('pins memory to the exact 2.0.0 release (jobs queue handed to the scheduler)', () => {
     expect(readSelfCompatRanges()['@justfortytwo/memory']).toBe('2.0.0');
