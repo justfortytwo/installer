@@ -473,8 +473,8 @@ describe('declared engine compat', () => {
   it('pins memory to the exact 2.0.0 release (jobs queue handed to the scheduler)', () => {
     expect(readSelfCompatRanges()['@justfortytwo/memory']).toBe('2.0.0');
   });
-  it('pins persona to the exact 1.1.0 release with the onboarding skill', () => {
-    expect(readSelfCompatRanges()['@justfortytwo/persona']).toBe('1.1.0');
+  it('pins persona to the exact 1.2.0 release (onboarding fills empty fields)', () => {
+    expect(readSelfCompatRanges()['@justfortytwo/persona']).toBe('1.2.0');
   });
   it('keeps fortytwo.compat the only engine version list (no deps/peerDeps on @justfortytwo/*)', () => {
     const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as Record<
