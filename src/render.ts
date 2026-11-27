@@ -69,6 +69,14 @@ export interface RenderResult {
   skipped: string[]; // captured outputs left untouched because they already exist
 }
 
+/** A `{{key}}` reference in a persona template (the key is group 1). */
+export const TEMPLATE_VAR = /\{\{\s*([\w.]+)\s*\}\}/g;
+
+/** The distinct answer keys a template references, in order of first use. */
+export function templateKeys(template: string): string[] {
+  return [...new Set([...template.matchAll(TEMPLATE_VAR)].map((m) => m[1]!))];
+}
+
 /**
  * Substitute `{{key}}` references with captured answers (flat, keyed by the
  * persona manifest field keys — snake_case, exactly what templates use).
@@ -81,7 +89,7 @@ export interface RenderResult {
  * they never resolve a prototype member into the rendered persona.
  */
 export function renderTemplate(template: string, answers: Answers): string {
-  return template.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_m, key: string) => {
+  return template.replace(TEMPLATE_VAR, (_m, key: string) => {
     const has = Object.prototype.hasOwnProperty.call(answers, key);
     const v = has ? (answers as Record<string, unknown>)[key] : undefined;
     if (v === undefined || v === null) {

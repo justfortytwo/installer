@@ -4,15 +4,15 @@
 // mkdtempSync sandbox (identity.json updated, a captured file kept).
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   pendingFields, askFields, answersFromFile, mergeAnswers, formatAnswerChange, parseEnrichArgs, performEnrich, enrichDeps,
-  runEnrich, type EnrichDeps,
+  runEnrich, renderReport, PromptEnd, type EnrichDeps, type EnrichRender, type TemplateRef,
 } from '../src/commands/enrich.js';
 import { resolveAnswers } from '../src/commands/init.js';
-import { loadPersonaManifest, renderPersona, type PersonaManifestField, type RenderResult } from '../src/render.js';
+import { loadPersonaManifest, renderPersona, templateKeys, type PersonaManifestField } from '../src/render.js';
 import { readIdentity, writeIdentity, type Answers, type Identity } from '../src/state.js';
 import { linkEngineInto } from './helpers/engine.js';
 
@@ -24,13 +24,15 @@ const FIELDS: PersonaManifestField[] = [
 ];
 
 /** An `ask` that replays scripted answers and records the prompts. */
-function scripted(answers: string[]): { ask: (q: string) => Promise<string>; prompts: string[] } {
+function scripted(answers: (string | PromptEnd)[]): { ask: (q: string) => Promise<string>; prompts: string[] } {
   const prompts: string[] = [];
   return {
     prompts,
     ask: async (q) => {
       prompts.push(q);
-      return answers.shift() ?? '';
+      const a = answers.shift() ?? '';
+      if (a instanceof PromptEnd) throw a;
+      return a;
     },
   };
 }
@@ -79,6 +81,21 @@ describe('askFields', () => {
   });
 });
 
+describe('askFields on Ctrl+D / Ctrl+C', () => {
+  it('treats Ctrl+D like "." and keeps the answers so far, list items included', async () => {
+    const { ask, prompts } = scripted(['ada@example.org', '', 'chess', new PromptEnd('eof'), 'never asked']);
+    const { updates, stopped } = await askFields(FIELDS.slice(1), {}, ask);
+    expect(updates).toEqual({ owner_email: 'ada@example.org', owner_interests: ['chess'] });
+    expect(stopped).toBe(true);
+    expect(prompts).toHaveLength(4);
+  });
+
+  it('lets Ctrl+C through as a cancel', async () => {
+    const { ask } = scripted(['ada@example.org', new PromptEnd('cancel')]);
+    await expect(askFields(FIELDS.slice(1), {}, ask)).rejects.toMatchObject({ kind: 'cancel' });
+  });
+});
+
 describe('answersFromFile', () => {
   it('takes pending fields, coerces lists, and reports other keys', () => {
     const r = answersFromFile(FIELDS.slice(1), {
@@ -92,6 +109,24 @@ describe('answersFromFile', () => {
       updates: { owner_email: 'ada@example.org', owner_interests: ['chess', 'jazz'] },
       ignored: ['agent_name', 'nope'],
     });
+  });
+
+  it('cleans list values: string/number items only, trimmed, blanks dropped; nothing usable is ignored', () => {
+    const lists: PersonaManifestField[] = [
+      { key: 'a', prompt: 'a', type: 'list' },
+      { key: 'b', prompt: 'b', type: 'list' },
+      { key: 'c', prompt: 'c', type: 'list' },
+      { key: 'd', prompt: 'd', type: 'list' },
+      { key: 'e', prompt: 'e', type: 'list' },
+    ];
+    const r = answersFromFile(lists, {
+      a: ['  chess ', 42, '', '   ', null, { x: 1 }, ['nested'], true],
+      b: [' ', null],
+      c: 7,
+      d: { x: 1 },
+      e: '',
+    });
+    expect(r).toEqual({ updates: { a: ['chess', '42'] }, ignored: ['b', 'c', 'd', 'e'] });
   });
 
   it('rejects anything but an object', () => {
@@ -131,6 +166,55 @@ describe('formatAnswerChange', () => {
   });
 });
 
+describe('templateKeys', () => {
+  it('lists each referenced key once, in order', () => {
+    expect(templateKeys('# {{agent_name}}\n{{ owner_email }} and {{agent_name}}\nno {braces}')).toEqual(['agent_name', 'owner_email']);
+  });
+});
+
+describe('renderReport', () => {
+  const refs: TemplateRef[] = [
+    { output: 'CLAUDE.md', mode: 'managed', keys: ['agent_name'] },
+    { output: 'context/SOUL.md', mode: 'captured', keys: ['agent_name'] },
+    { output: 'context/memory/owner-profile.md', mode: 'captured', keys: ['owner_email', 'owner_bio_short'] },
+    { output: 'context/rules/APPROVED.md', mode: 'captured', keys: [] },
+  ];
+  const kept: EnrichRender = {
+    written: ['CLAUDE.md'],
+    skipped: ['context/SOUL.md', 'context/memory/owner-profile.md', 'context/rules/APPROVED.md'],
+    changed: [],
+  };
+
+  it('names a changed key and the kept captured file that is its only home', () => {
+    const lines = renderReport(kept, refs, ['owner_bio_short']);
+    expect(lines).toEqual([
+      '! owner_bio_short is only in context/memory/owner-profile.md (kept as you have it): move it aside and run `fortytwo enrich` to regenerate it',
+    ]);
+    expect(lines.join('\n')).not.toContain('APPROVED.md');
+    expect(lines.join('\n')).not.toContain('SOUL.md');
+  });
+
+  it('says "also" when a managed file got the new value too, and lists changed files', () => {
+    const lines = renderReport({ ...kept, changed: ['CLAUDE.md'] }, refs, ['agent_name']);
+    expect(lines).toEqual([
+      '✓ persona files updated: CLAUDE.md',
+      '! agent_name is also in context/SOUL.md (kept as you have it): move it aside and run `fortytwo enrich` to regenerate it',
+    ]);
+  });
+
+  it('flags a key no template uses, and says nothing for a regenerated file', () => {
+    const regenerated: EnrichRender = { written: ['CLAUDE.md', 'context/memory/owner-profile.md'], skipped: [], changed: ['context/memory/owner-profile.md'] };
+    expect(renderReport(regenerated, refs, ['owner_email', 'owner_x'])).toEqual([
+      '✓ persona files updated: context/memory/owner-profile.md',
+      '! owner_x is not used by any persona file',
+    ]);
+  });
+
+  it('prints nothing when no file changed and no key changed', () => {
+    expect(renderReport(kept, refs, [])).toEqual([]);
+  });
+});
+
 describe('parseEnrichArgs', () => {
   it('parses --all and --answers, rejects unknown options', () => {
     expect(parseEnrichArgs(['--all', '--answers', 'a.json'])).toEqual({ all: true, answersFile: 'a.json' });
@@ -154,7 +238,15 @@ describe('performEnrich', () => {
       readIdentity: () => identity({ agent_name: 'Ada', owner_email: '', owner_bio_short: '', owner_interests: [] }),
       writeIdentity: (i) => { saved = i; },
       fields: () => FIELDS,
-      render: (): RenderResult => { renders++; return { written: ['CLAUDE.md'], skipped: ['context/SOUL.md'] }; },
+      render: (): EnrichRender => {
+        renders++;
+        return { written: ['CLAUDE.md'], skipped: ['context/SOUL.md', 'context/rules/APPROVED.md'], changed: [] };
+      },
+      templateRefs: () => [
+        { output: 'CLAUDE.md', mode: 'managed', keys: ['agent_name'] },
+        { output: 'context/SOUL.md', mode: 'captured', keys: ['agent_name', 'owner_email'] },
+        { output: 'context/rules/APPROVED.md', mode: 'captured', keys: [] },
+      ],
       readAnswersFile: () => ({}),
       out: (s) => { out += s; },
       err: (s) => { err += s; },
@@ -185,22 +277,39 @@ describe('performEnrich', () => {
     expect(await performEnrich(deps({ ask }), {})).toBe(0);
     expect(saved?.answers.owner_email).toBe('ada@example.org');
     expect(out).toContain('+ owner_email: ada@example.org');
-    expect(out).toMatch(/kept as you have them: context\/SOUL\.md/);
+    expect(out).toContain('! owner_email is only in context/SOUL.md (kept as you have it)');
+    expect(out).not.toContain('APPROVED.md');
+    expect(out).not.toMatch(/written/);
     expect(renders).toBe(1);
   });
 
-  it('says so and skips the render when nothing changed', async () => {
+  it('says so, saves nothing, and still renders when nothing changed', async () => {
     const { ask } = scripted([]);
     expect(await performEnrich(deps({ ask }), {})).toBe(0);
-    expect(out).toMatch(/nothing changed; persona not re-rendered/);
+    expect(out).toMatch(/nothing changed in \.fortytwo\/identity\.json/);
+    expect(saved).toBeNull();
+    expect(renders).toBe(1);
+  });
+
+  it('cancels on Ctrl+C: exit 130, nothing saved or rendered', async () => {
+    const { ask } = scripted(['ada@example.org', new PromptEnd('cancel')]);
+    expect(await performEnrich(deps({ ask }), {})).toBe(130);
+    expect(err).toContain('enrich: cancelled, nothing saved');
     expect(saved).toBeNull();
     expect(renders).toBe(0);
+  });
+
+  it('saves the answers so far on Ctrl+D', async () => {
+    const { ask } = scripted(['ada@example.org', new PromptEnd('eof')]);
+    expect(await performEnrich(deps({ ask }), {})).toBe(0);
+    expect(saved?.answers.owner_email).toBe('ada@example.org');
   });
 
   it('has nothing to ask when every field is set, unless --all', async () => {
     const full = identity({ agent_name: 'Ada', owner_email: 'a@b.c', owner_bio_short: 'b', owner_interests: ['x'] });
     expect(await performEnrich(deps({ readIdentity: () => full }), {})).toBe(0);
     expect(out).toMatch(/every persona field has a value/);
+    expect(renders).toBe(1);
 
     const { ask } = scripted(['Grace', '', '', '']);
     expect(await performEnrich(deps({ readIdentity: () => full, ask }), { all: true })).toBe(0);
@@ -282,8 +391,28 @@ describe('enrich against the real persona (sandbox)', () => {
     expect(readIdentity(dir)!.answers.owner_email).toBe('grace@example.org');
     expect(readFileSync(capturedPath, 'utf8')).toBe('my own edits\n');
     expect(out).toContain('+ owner_email: grace@example.org');
-    expect(out).toContain(captured.output);
+    // The persona manifest asks for owner_email but no template renders it.
+    expect(out).toContain('! owner_email is not used by any persona file');
+    expect(out).not.toContain(captured.output);
+    expect(out).not.toMatch(/written/);
     for (const f of manifest.files.filter((x) => x.mode === 'managed')) expect(existsSync(join(dir, f.output))).toBe(true);
+  });
+
+  it('regenerates a captured file the owner moved aside, even with nothing to ask', async () => {
+    const profile = join(dir, 'context/memory/owner-profile.md');
+    writeFileSync(join(dir, 'more.json'), JSON.stringify({ owner_bio_short: 'Wrote the first compiler.' }));
+    expect(await runEnrich(['--answers', 'more.json'])).toBe(0);
+    expect(readFileSync(profile, 'utf8')).not.toContain('Wrote the first compiler.');
+
+    renameSync(profile, `${profile}.bak`);
+    let out = '';
+    const deps = { ...enrichDeps(dir), out: (s: string) => { out += s; } };
+    // Empty answers file: nothing changes in identity.json, the render still runs.
+    writeFileSync(join(dir, 'none.json'), '{}');
+    expect(await performEnrich(deps, { answersFile: 'none.json' })).toBe(0);
+    expect(out).toContain('nothing changed in .fortytwo/identity.json');
+    expect(out).toContain('✓ persona files updated: context/memory/owner-profile.md');
+    expect(readFileSync(profile, 'utf8')).toContain('Wrote the first compiler.');
   });
 
   it('runEnrich --answers works without a terminal', async () => {

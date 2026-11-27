@@ -16,14 +16,20 @@
 // write the same `answers` map. When enrich replaces a value onboard saved, it
 // drops that key's `profileProvenance`, since the old source no longer applies.
 //
-// Re-render goes through renderPersona like init and onboard: managed outputs are
-// rewritten, captured outputs the owner already has are never overwritten.
+// Every run that gets past the checks renders through renderPersona, like
+// onboard, even when no answer changed: managed outputs are rewritten, captured
+// outputs the owner already has are never overwritten, and a captured file the
+// owner moved aside is written fresh. The report names only files whose content
+// changed, and for each changed answer the kept captured files that use it.
+// Ctrl+D while asking stops and saves like "."; Ctrl+C cancels and saves nothing.
 
 import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { readIdentity, writeIdentity, type Answers, type Identity } from '../state.js';
-import { loadPersonaManifest, renderPersona, type PersonaManifestField, type RenderResult } from '../render.js';
+import {
+  loadPersonaManifest, renderPersona, templateKeys, type PersonaFile, type PersonaManifestField, type RenderResult,
+} from '../render.js';
 import { escapeForTerminal } from '../onboard.js';
 import { askList, coerceList, isEmpty, listPromptLabel } from './init.js';
 
@@ -38,13 +44,34 @@ export interface EnrichDeps {
   writeIdentity: (identity: Identity) => void;
   /** The installed persona's manifest fields. Throws when persona is not installed. */
   fields: () => PersonaManifestField[];
-  render: (identity: Identity) => RenderResult;
+  /** Render the persona; `changed` lists the written outputs whose content differs from before. */
+  render: (identity: Identity) => EnrichRender;
+  /** Each persona output with the answer keys its template references. */
+  templateRefs: () => TemplateRef[];
   /** The parsed `--answers` file. Throws when it is missing or not JSON. */
   readAnswersFile: (path: string) => unknown;
-  /** Present only when a person can answer in a terminal. */
+  /** Present only when a person can answer in a terminal. Rejects with PromptEnd on Ctrl+D / Ctrl+C. */
   ask?: (prompt: string) => Promise<string>;
   out: (s: string) => void;
   err: (s: string) => void;
+}
+
+export interface EnrichRender extends RenderResult {
+  changed: string[];
+}
+
+export interface TemplateRef {
+  output: string;
+  mode: PersonaFile['mode'];
+  keys: string[];
+}
+
+/** The terminal ended a prompt: `eof` is Ctrl+D (stop and save), `cancel` is Ctrl+C (save nothing). */
+export class PromptEnd extends Error {
+  constructor(readonly kind: 'eof' | 'cancel') {
+    super(kind === 'eof' ? 'input closed' : 'cancelled');
+    this.name = 'PromptEnd';
+  }
 }
 
 /** One answer enrich saved: `before` is absent when the field had no value. */
@@ -65,6 +92,8 @@ under context/ are kept as they are.
   Enter            skip a field (it stays empty)
   .                stop asking and save what you answered so far
   --all            also ask for fields that have a value (Enter keeps it)
+  Ctrl+D           same as "."
+  Ctrl+C           cancel; nothing is saved
   --answers <file> read the values from a JSON object keyed by field
                    (no prompts; works without a terminal)
 `;
@@ -104,7 +133,8 @@ export function preview(v: string | string[], max = 60): string {
 /**
  * Ask for each pending field. A blank answer skips it (the current value, if
  * any, stays). Lists are asked item by item like init. Only non-blank answers
- * are returned. Pure: `ask` is injected.
+ * are returned. "." or Ctrl+D (PromptEnd 'eof') stops and keeps what was
+ * answered; Ctrl+C (PromptEnd 'cancel') propagates. Pure: `ask` is injected.
  */
 export async function askFields(
   pending: PersonaManifestField[],
@@ -114,7 +144,14 @@ export async function askFields(
   const updates: Answers = {};
   let stopped = false;
   const ask_ = async (q: string): Promise<string> => {
-    const a = await ask(q);
+    let a: string;
+    try {
+      a = await ask(q);
+    } catch (e) {
+      if (!(e instanceof PromptEnd) || e.kind !== 'eof') throw e;
+      stopped = true;
+      return '';
+    }
     if (a.trim() !== STOP_WORD) return a;
     stopped = true;
     return '';
@@ -139,7 +176,9 @@ export async function askFields(
 /**
  * Values from an `--answers` JSON object for the pending fields. Keys that are
  * not pending (unknown, or already set without --all) are returned in `ignored`.
- * Lists accept an array or a comma/newline separated string, like init.
+ * Lists accept an array of strings/numbers (trimmed, blanks dropped) or a
+ * comma/newline separated string, like init; a list value with no usable item
+ * is ignored too.
  */
 export function answersFromFile(
   pending: PersonaManifestField[],
@@ -153,8 +192,11 @@ export function answersFromFile(
     const f = byKey.get(key);
     if (!f) { ignored.push(key); continue; }
     if (f.type === 'list') {
-      const items = coerceList(v);
+      const items = Array.isArray(v)
+        ? v.filter((x): x is string | number => typeof x === 'string' || typeof x === 'number').map((x) => String(x).trim()).filter(Boolean)
+        : typeof v === 'string' ? coerceList(v) : [];
       if (items.length > 0) updates[key] = items;
+      else ignored.push(key);
     } else if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
       const s = String(v).trim();
       if (s) updates[key] = s;
@@ -201,6 +243,37 @@ export function formatAnswerChange(c: AnswerChange): string {
     : `  ~ ${c.key}: ${preview(c.before)} -> ${preview(c.after)}`;
 }
 
+/**
+ * What the render did, for the owner: the outputs whose content changed, then
+ * for each changed answer key the captured files that use it but were kept as
+ * the owner has them. Files that use no changed key are never named.
+ */
+export function renderReport(r: EnrichRender, refs: TemplateRef[], changedKeys: string[]): string[] {
+  const lines: string[] = [];
+  if (r.changed.length > 0) lines.push(`✓ persona files updated: ${r.changed.join(', ')}`);
+  for (const key of changedKeys) {
+    const using = refs.filter((f) => f.keys.includes(key));
+    const kept = using.filter((f) => f.mode === 'captured' && r.skipped.includes(f.output)).map((f) => f.output);
+    if (using.length === 0) {
+      lines.push(`! ${key} is not used by any persona file`);
+    } else if (kept.length > 0) {
+      const onlyThere = kept.length === using.length;
+      const one = kept.length === 1;
+      lines.push(
+        `! ${key} is ${onlyThere ? 'only' : 'also'} in ${kept.join(', ')} (kept as you have ${one ? 'it' : 'them'}): ` +
+        `move ${one ? 'it' : 'them'} aside and run \`fortytwo enrich\` to regenerate ${one ? 'it' : 'them'}`,
+      );
+    }
+  }
+  return lines;
+}
+
+function renderAndReport(deps: EnrichDeps, identity: Identity, changedKeys: string[]): void {
+  const r = deps.render(identity);
+  const refs = changedKeys.length > 0 ? deps.templateRefs() : [];
+  for (const line of renderReport(r, refs, changedKeys)) deps.out(`${line}\n`);
+}
+
 export async function performEnrich(deps: EnrichDeps, flags: EnrichFlags): Promise<number> {
   if (flags.help) { deps.out(USAGE); return 0; }
 
@@ -220,6 +293,7 @@ export async function performEnrich(deps: EnrichDeps, flags: EnrichFlags): Promi
   const pending = pendingFields(fields, identity.answers, { all: flags.all });
   if (pending.length === 0) {
     deps.out('enrich: every persona field has a value. Run `fortytwo enrich --all` to revisit them.\n');
+    renderAndReport(deps, identity, []);
     return 0;
   }
 
@@ -243,7 +317,13 @@ export async function performEnrich(deps: EnrichDeps, flags: EnrichFlags): Promi
     updates = parsed.updates;
   } else if (deps.ask) {
     deps.out(`${pending.length} field(s) to fill. Enter skips one; "${STOP_WORD}" stops and saves.\n`);
-    updates = (await askFields(pending, identity.answers, deps.ask)).updates;
+    try {
+      updates = (await askFields(pending, identity.answers, deps.ask)).updates;
+    } catch (e) {
+      if (!(e instanceof PromptEnd)) throw e;
+      deps.err('\nenrich: cancelled, nothing saved\n');
+      return 130;
+    }
   } else {
     deps.err('enrich: needs a terminal to ask questions. Run it in one, or pass --answers <file.json>.\n');
     return 2;
@@ -251,7 +331,9 @@ export async function performEnrich(deps: EnrichDeps, flags: EnrichFlags): Promi
 
   const merged = mergeAnswers(fields, identity.answers, updates);
   if (merged.changes.length === 0) {
-    deps.out('enrich: nothing changed; persona not re-rendered.\n');
+    deps.out('enrich: nothing changed in .fortytwo/identity.json.\n');
+    // Holes from a newer persona are filled for rendering only; nothing is written.
+    renderAndReport(deps, { ...identity, answers: merged.answers }, []);
     return 0;
   }
 
@@ -265,11 +347,7 @@ export async function performEnrich(deps: EnrichDeps, flags: EnrichFlags): Promi
   deps.out(`✓ saved ${merged.changes.length} answer(s) to .fortytwo/identity.json:\n`);
   for (const c of merged.changes) deps.out(`${formatAnswerChange(c)}\n`);
 
-  const r = deps.render(updated);
-  deps.out(`✓ rendered persona: ${r.written.length} written, ${r.skipped.length} preserved\n`);
-  if (r.skipped.length > 0) {
-    deps.out(`  kept as you have them: ${r.skipped.join(', ')}. Your new answers show up in one of these only after you move it aside; the next render (an enrich or onboard that saves something) writes it fresh.\n`);
-  }
+  renderAndReport(deps, updated, merged.changes.map((c) => c.key));
   return 0;
 }
 
@@ -279,7 +357,25 @@ export function enrichDeps(root: string): EnrichDeps {
     readIdentity: () => readIdentity(root),
     writeIdentity: (identity) => writeIdentity(identity, root),
     fields: () => loadPersonaManifest(undefined, root).fields,
-    render: (identity) => renderPersona(identity, { root }),
+    render: (identity) => {
+      const read = (output: string): string | null => {
+        const abs = join(root, output);
+        return existsSync(abs) ? readFileSync(abs, 'utf8') : null;
+      };
+      const before = new Map(loadPersonaManifest(undefined, root).files.map((f) => [f.output, read(f.output)]));
+      const r = renderPersona(identity, { root });
+      return { ...r, changed: r.written.filter((o) => read(o) !== before.get(o)) };
+    },
+    templateRefs: () => {
+      const m = loadPersonaManifest(undefined, root);
+      const tplRoot = resolve(m.templatesDir);
+      return m.files.map((f) => {
+        const tplPath = resolve(tplRoot, f.template);
+        // Same guard as renderPersona: never read outside the templates dir.
+        if (!tplPath.startsWith(tplRoot + sep)) throw new Error(`template path escapes templates dir: ${f.template}`);
+        return { output: f.output, mode: f.mode, keys: templateKeys(readFileSync(tplPath, 'utf8')) };
+      });
+    },
     readAnswersFile: (path) => {
       const abs = resolve(root, path);
       if (!existsSync(abs)) throw new Error('no such file');
@@ -299,8 +395,21 @@ export async function runEnrich(argv: string[]): Promise<number> {
   const base = enrichDeps(process.cwd());
   if (process.stdin.isTTY !== true || parsed.answersFile !== undefined || parsed.help) return performEnrich(base, parsed);
   const rl = createInterface({ input: process.stdin, output: process.stdout });
+  // Ctrl+D and Ctrl+C both reject rl.question with an AbortError. A SIGINT
+  // listener (which stops readline from closing on Ctrl+C) aborts the question
+  // through this signal instead, so `signal.aborted` tells the two apart.
+  const ctrlC = new AbortController();
+  rl.on('SIGINT', () => ctrlC.abort());
+  const ask = async (q: string): Promise<string> => {
+    try {
+      return await rl.question(q, { signal: ctrlC.signal });
+    } catch (e) {
+      if ((e as Error).name !== 'AbortError') throw e;
+      throw new PromptEnd(ctrlC.signal.aborted ? 'cancel' : 'eof');
+    }
+  };
   try {
-    return await performEnrich({ ...base, ask: (q) => rl.question(q) }, parsed);
+    return await performEnrich({ ...base, ask }, parsed);
   } finally {
     rl.close();
   }
