@@ -56,13 +56,13 @@ export interface AnswerSources {
 function envKey(key: string): string {
   return `FORTYTWO_${key.toUpperCase()}`;
 }
-function isEmpty(v: unknown): boolean {
+export function isEmpty(v: unknown): boolean {
   if (v == null) return true;
   if (typeof v === 'string') return v.trim() === '';
   if (Array.isArray(v)) return v.length === 0;
   return false;
 }
-function coerceList(v: unknown): string[] {
+export function coerceList(v: unknown): string[] {
   if (Array.isArray(v)) return v.map(String);
   if (typeof v === 'string') return v.split(/\r?\n|,/).map((s) => s.trim()).filter(Boolean);
   return [];

@@ -104,7 +104,7 @@ gitignored `.fortytwo/identity.json`; neither is ever committed.
 | `doctor`   | Health-check the engine: check Gate package compatibility (`POLICY_SCHEMA_VERSION`) and memory's `MEMORY_TOOL_CONTRACT_VERSION` match what this CLI expects, confirm the memory DB is migrated, cross-check installed sibling versions against the declared compatibility ranges, check the embedder model is pulled (warn-only), and report whether the optional safety gate is on. |
 | `update`   | Resolve the latest in-range version of each **installed** engine package (plus `@justfortytwo/transcript` when memory is installed and it is missing), install it, rotate the rollback baseline, then run `doctor` to verify. `--dry-run` reports the resolved set without installing. |
 | `rollback` | Re-install the previous version set recorded before the last `update`, then run `doctor`. Manual by design — never auto-triggered, so you can inspect a bad upgrade first. |
-| `enrich`   | Capture more answers to deepen the persona, then re-render (no clobber). |
+| `enrich`   | Ask for the persona fields that are still empty (mostly the optional ones `init` skips), one at a time: Enter skips a field, a line with only `.` stops and saves. Saves the answers to `.fortytwo/identity.json`, prints what changed and re-renders the persona (managed files rewritten, files you already have under `context/` kept). `--all` also asks for fields that have a value (Enter keeps it); `--answers <file.json>` reads the values without prompting. When nothing changed it says so and does not render. Values the assistant drafted from your links and uploads go through `onboard` instead. |
 | `onboard`  | Review and save the owner profile drafted by the onboarding interview (see [Owner onboarding](#owner-onboarding-optional)). Shows what would change, with where each claim came from, and saves only what you confirm in a terminal. `--dry-run` only shows; `--draft <path>` reviews another file. |
 | `forget`   | Permanently delete memories selected by `--id` / `--query` (semantic) / `--tag` / `--source` / `--since`/`--until` — previewed and confirmed (or `--yes`). Owner-only: it deletes via a library API, never exposed to the assistant. |
 | `unbind`   | Revoke a chat: `--chat-id <id>` or `--all` (optionally `--channel`). Removes it from the bridge's bindings db, so a chat paired with `pair` is refused from its next message, and from `identity.json`. `--all` also voids pairing codes that have not expired. An id still in `ALLOWED_CHAT_IDS` keeps access; unbind names it so you can remove it from `.env`. |
@@ -114,9 +114,9 @@ gitignored `.fortytwo/identity.json`; neither is ever committed.
 Run `fortytwo <verb> --help` for verb-specific options.
 
 > **Status:** `init`, `start`, `status`, `stop`, `pair`, `doctor`, `forget`,
-> `unbind`, `update`, `rollback` and `onboard` are functional — `update` resolves latest-in-range from npm,
+> `unbind`, `update`, `rollback`, `enrich` and `onboard` are functional — `update` resolves latest-in-range from npm,
 > installs, rotates the rollback ledger, and post-verifies with `doctor`;
-> `rollback` restores the recorded previous set. `enrich` is still a stub.
+> `rollback` restores the recorded previous set.
 
 ## Owner onboarding (optional)
 
