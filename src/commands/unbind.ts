@@ -1,11 +1,17 @@
-// unbind — revoke a channel binding (the inverse of `pair`).
+// unbind: revoke a channel binding (the inverse of `pair`).
 //
-// Removes the binding from identity.json's `channels`. The actual authorization
-// today is the static ALLOWED_CHAT_IDS in .env, so unbind also reminds the owner
-// to drop the id there. (Server-side challenge revocation is N/A until dynamic
-// pairing lands in the channel adapter — see pair.ts.)
+// A Telegram chat can be authorized two ways: a binding in the bridge's
+// bindings db (written when the chat redeems a `fortytwo pair` code) or the
+// static ALLOWED_CHAT_IDS in .env. unbind removes matching bindings from the
+// bindings db, which the bridge reads on every message, so access ends without
+// a restart. It also prunes identity.json's `channels` and reminds the owner to
+// drop the ids from ALLOWED_CHAT_IDS, which it does not edit.
 
+import { existsSync } from 'node:fs';
+import { loadTelegram } from '../engine.js';
 import { readIdentity, writeIdentity, type ChannelBinding } from '../state.js';
+import { readProjectSetting } from './init.js';
+import { resolveBindingsDbPath } from './pair.js';
 
 interface UnbindFlags {
   channel?: string;
@@ -30,6 +36,43 @@ export function pruneChannels(
     return true;
   });
   return { kept, removed };
+}
+
+/** The part of telegram's BindingStore that unbind needs. */
+export interface PairedChatStore {
+  list(channelType?: string): Array<{ channelUserId: string }>;
+  remove(channelType: string, channelUserId: string): void;
+}
+
+/**
+ * Remove paired Telegram chats from the bindings store: every one with `all`,
+ * otherwise the one whose id is `chatId`. Returns the removed chat ids.
+ */
+export function revokePairedChats(store: PairedChatStore, sel: { chatId?: string; all?: boolean }): string[] {
+  const ids = store.list('telegram').map((b) => b.channelUserId)
+    .filter((id) => sel.all === true || (sel.chatId != null && id === sel.chatId));
+  for (const id of ids) store.remove('telegram', id);
+  return ids;
+}
+
+type TgStoreModule = { SqliteBindingStore?: new (dbPath: string) => PairedChatStore };
+
+/**
+ * Open the bridge's bindings db and revoke matching chats. Never creates the db:
+ * no file means nothing was ever paired. Returns null when the db exists but
+ * @justfortytwo/telegram is not installed to read it.
+ */
+async function revokeInBindingsDb(root: string, sel: { chatId?: string; all?: boolean }): Promise<string[] | null> {
+  const dbPath = resolveBindingsDbPath(root);
+  if (!existsSync(dbPath)) return [];
+  const tg = (await loadTelegram()) as unknown as TgStoreModule | null;
+  if (!tg || typeof tg.SqliteBindingStore !== 'function') return null;
+  return revokePairedChats(new tg.SqliteBindingStore(dbPath), sel);
+}
+
+/** Ids in ALLOWED_CHAT_IDS (shell env, else the project's .env), comma-separated. */
+function allowedChatIds(root: string): string[] {
+  return (readProjectSetting('ALLOWED_CHAT_IDS', root) ?? '').split(',').map((v) => v.trim()).filter(Boolean);
 }
 
 function parseUnbindArgs(argv: string[]): UnbindFlags {
@@ -57,15 +100,28 @@ export async function runUnbind(argv: string[]): Promise<number> {
     return 2;
   }
   const { kept, removed } = pruneChannels(identity.channels ?? [], flags);
-  if (removed.length === 0) {
+  if (removed.length) writeIdentity({ ...identity, channels: kept }, root);
+
+  const telegramSelected = !flags.channel || flags.channel === 'telegram';
+  const revoked = telegramSelected ? await revokeInBindingsDb(root, flags) : [];
+  if (revoked === null) {
+    process.stderr.write('unbind: the Telegram bindings db exists but @justfortytwo/telegram is not installed, so paired chats were not revoked.\n');
+  }
+
+  if (removed.length === 0 && !revoked?.length) {
     process.stdout.write('unbind: no matching binding found; nothing changed.\n');
-    return 0;
+    return revoked === null ? 1 : 0;
   }
-  writeIdentity({ ...identity, channels: kept }, root);
-  const ids = removed.flatMap((c) => c.allowedChatIds ?? []);
-  process.stdout.write(`✓ removed ${removed.length} binding(s) from identity.json\n`);
-  if (ids.length) {
-    process.stdout.write(`  Also remove ${ids.join(', ')} from ALLOWED_CHAT_IDS in .env to fully revoke access.\n`);
+  if (removed.length) process.stdout.write(`✓ removed ${removed.length} binding(s) from identity.json\n`);
+  if (revoked?.length) {
+    process.stdout.write(`✓ revoked paired chat(s) ${revoked.join(', ')}; the bridge refuses them from the next message\n`);
   }
+  // ALLOWED_CHAT_IDS authorizes on its own; name the unbound ids it still lists.
+  const unbound = new Set([...removed.flatMap((c) => c.allowedChatIds ?? []), ...(revoked ?? [])]);
+  const stillAllowed = (telegramSelected ? allowedChatIds(root) : []).filter((id) => unbound.has(id) || flags.all === true);
+  if (stillAllowed.length) {
+    process.stdout.write(`  ${stillAllowed.join(', ')} ${stillAllowed.length === 1 ? 'is' : 'are'} still in ALLOWED_CHAT_IDS, which authorizes on its own: remove ${stillAllowed.length === 1 ? 'it' : 'them'} from .env and restart fortytwo.\n`);
+  }
+  if (revoked === null) return 1;
   return 0;
 }
