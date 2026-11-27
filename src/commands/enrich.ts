@@ -16,8 +16,8 @@
 // fetched and uploaded content (untrusted, so it confirms each change and records
 // provenance), plus deep-profile facts in memory. enrich --answers saves values
 // the owner wrote, so there is nothing to confirm and no memory involved. Both
-// write the same `answers` map. When enrich replaces a value onboard saved, it
-// drops that key's `profileProvenance`, since the old source no longer applies.
+// write the same `answers` map, but enrich only fills fields that are empty: a
+// field with a value is changed through the assistant and `fortytwo onboard`.
 //
 // Every run that gets past the checks renders through renderPersona, like
 // onboard, even when no answer changed: managed outputs are rewritten, captured
@@ -64,10 +64,9 @@ export interface TemplateRef {
   keys: string[];
 }
 
-/** One answer enrich saved: `before` is absent when the field had no value. */
+/** One empty field enrich filled. */
 export interface AnswerChange {
   key: string;
-  before?: string | string[];
   after: string | string[];
 }
 
@@ -162,49 +161,70 @@ export function preview(v: string | string[], max = 60): string {
   return escapeForTerminal(short);
 }
 
+/** What an `--answers` file gives: values for empty fields, and the keys left out. */
+export interface FileAnswers {
+  updates: Answers;
+  /** Keys that are not persona fields. */
+  unknown: string[];
+  /** Persona fields that already have a value; enrich never replaces one. */
+  alreadySet: string[];
+  /** Empty fields whose value is blank or of the wrong type. */
+  unusable: string[];
+}
+
 /**
- * Values from an `--answers` JSON object for the empty fields. Keys that are
- * not empty fields (unknown, or already set) are returned in `ignored`.
- * Lists accept an array of strings/numbers (trimmed, blanks dropped) or a
- * comma/newline separated string, like init; a list value with no usable item
- * is ignored too.
+ * Values from an `--answers` JSON object for the fields still empty in
+ * `answers`. Lists accept an array of strings/numbers (trimmed, blanks dropped)
+ * or a comma/newline separated string, like init. A blank string is skipped
+ * silently; any other value with nothing usable goes to `unusable`.
  */
 export function answersFromFile(
-  pending: PersonaManifestField[],
+  fields: PersonaManifestField[],
+  answers: Answers,
   raw: unknown,
-): { updates: Answers; ignored: string[] } | { error: string } {
+): FileAnswers | { error: string } {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { error: 'the answers file must hold a JSON object' };
-  const byKey = new Map(pending.map((f) => [f.key, f]));
-  const updates: Answers = {};
-  const ignored: string[] = [];
+  const byKey = new Map(fields.map((f) => [f.key, f]));
+  const empty = new Set(emptyFields(fields, answers).map((f) => f.key));
+  const r: FileAnswers = { updates: {}, unknown: [], alreadySet: [], unusable: [] };
   for (const [key, v] of Object.entries(raw as Record<string, unknown>)) {
     const f = byKey.get(key);
-    if (!f) { ignored.push(key); continue; }
+    if (!f) { r.unknown.push(key); continue; }
+    if (!empty.has(key)) { r.alreadySet.push(key); continue; }
     if (f.type === 'list') {
       const items = Array.isArray(v)
         ? v.filter((x): x is string | number => typeof x === 'string' || typeof x === 'number').map((x) => String(x).trim()).filter(Boolean)
         : typeof v === 'string' ? coerceList(v) : [];
-      if (items.length > 0) updates[key] = items;
-      else ignored.push(key);
+      if (items.length > 0) r.updates[key] = items;
+      else r.unusable.push(key);
     } else if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
       const s = String(v).trim();
-      if (s) updates[key] = s;
+      if (s) r.updates[key] = s;
     } else if (v != null) {
-      ignored.push(key);
+      r.unusable.push(key);
     }
   }
-  return { updates, ignored };
+  return r;
 }
 
-function sameValue(a: string | string[] | undefined, b: string | string[]): boolean {
-  return JSON.stringify(a ?? null) === JSON.stringify(b);
+/** The warning lines for the keys an `--answers` file gave that were not saved. */
+export function fileAnswersReport(r: FileAnswers): string[] {
+  const keys = (ks: string[]): string => ks.map((k) => escapeForTerminal(k)).join(', ');
+  const lines: string[] = [];
+  if (r.alreadySet.length > 0) {
+    lines.push(`! skipped ${r.alreadySet.length} field(s) that already have a value; to change one, ask your assistant ("help me fill in my profile") and run fortytwo onboard: ${keys(r.alreadySet)}`);
+  }
+  if (r.unknown.length > 0) lines.push(`! ignored ${r.unknown.length} key(s) that are not persona fields: ${keys(r.unknown)}`);
+  if (r.unusable.length > 0) lines.push(`! ignored ${r.unusable.length} key(s) with no usable value: ${keys(r.unusable)}`);
+  return lines;
 }
 
 /**
  * Merge `updates` into `answers` (new object; inputs untouched). Only manifest
- * fields are taken. A manifest field absent from `answers` (a newer persona
- * added it) is filled with '' or [] so the renderer, which fails on a missing
- * variable, never sees a hole. Returns the changes that actually differ.
+ * fields that are still empty are filled; a field with a value is never
+ * replaced. A manifest field absent from `answers` (a newer persona added it)
+ * is filled with '' or [] so the renderer, which fails on a missing variable,
+ * never sees a hole. Returns the fields that were filled.
  */
 export function mergeAnswers(
   fields: PersonaManifestField[],
@@ -213,23 +233,19 @@ export function mergeAnswers(
 ): { answers: Answers; changes: AnswerChange[] } {
   const next: Answers = { ...answers };
   const changes: AnswerChange[] = [];
-  for (const f of fields) {
-    const has = Object.prototype.hasOwnProperty.call(next, f.key);
-    if (!has) next[f.key] = f.type === 'list' ? [] : '';
+  for (const f of emptyFields(fields, answers)) {
+    if (!Object.prototype.hasOwnProperty.call(next, f.key)) next[f.key] = f.type === 'list' ? [] : '';
     if (!Object.prototype.hasOwnProperty.call(updates, f.key)) continue;
     const after = updates[f.key]!;
-    const before = has ? answers[f.key] : undefined;
-    if (sameValue(before, after)) continue;
+    if (isEmpty(after)) continue;
     next[f.key] = after;
-    changes.push({ key: f.key, ...(before !== undefined && !isEmpty(before) ? { before } : {}), after });
+    changes.push({ key: f.key, after });
   }
   return { answers: next, changes };
 }
 
 export function formatAnswerChange(c: AnswerChange): string {
-  return c.before === undefined
-    ? `  + ${c.key}: ${preview(c.after)}`
-    : `  ~ ${c.key}: ${preview(c.before)} -> ${preview(c.after)}`;
+  return `  + ${c.key}: ${preview(c.after)}`;
 }
 
 /**
@@ -289,12 +305,6 @@ export async function performEnrich(deps: EnrichDeps, flags: EnrichFlags): Promi
     return 0;
   }
 
-  if (empty.length === 0) {
-    deps.out('enrich: every persona field has a value.\n');
-    renderAndReport(deps, identity, []);
-    return 0;
-  }
-
   let raw: unknown;
   try {
     raw = deps.readAnswersFile(flags.answersFile);
@@ -302,29 +312,24 @@ export async function performEnrich(deps: EnrichDeps, flags: EnrichFlags): Promi
     deps.err(`enrich: cannot read ${flags.answersFile}: ${(e as Error).message}\n`);
     return 2;
   }
-  const parsed = answersFromFile(empty, raw);
+  const parsed = answersFromFile(fields, identity.answers, raw);
   if ('error' in parsed) {
     deps.err(`enrich: ${flags.answersFile}: ${parsed.error}\n`);
     return 2;
   }
-  if (parsed.ignored.length > 0) {
-    deps.out(`! ignored ${parsed.ignored.length} key(s) that are not empty persona fields: ${parsed.ignored.map((k) => escapeForTerminal(k)).join(', ')}\n`);
-  }
+  for (const line of fileAnswersReport(parsed)) deps.out(`${line}\n`);
 
   const merged = mergeAnswers(fields, identity.answers, parsed.updates);
   if (merged.changes.length === 0) {
-    deps.out('enrich: nothing changed in .fortytwo/identity.json.\n');
+    deps.out(empty.length === 0
+      ? 'enrich: every persona field has a value.\n'
+      : 'enrich: nothing changed in .fortytwo/identity.json.\n');
     // Holes from a newer persona are filled for rendering only; nothing is written.
     renderAndReport(deps, { ...identity, answers: merged.answers }, []);
     return 0;
   }
 
-  let profileProvenance = identity.profileProvenance;
-  if (profileProvenance) {
-    profileProvenance = { ...profileProvenance };
-    for (const c of merged.changes) delete profileProvenance[c.key];
-  }
-  const updated: Identity = { ...identity, answers: merged.answers, ...(profileProvenance ? { profileProvenance } : {}) };
+  const updated: Identity = { ...identity, answers: merged.answers };
   deps.writeIdentity(updated);
   deps.out(`✓ saved ${merged.changes.length} answer(s) to .fortytwo/identity.json:\n`);
   for (const c of merged.changes) deps.out(`${formatAnswerChange(c)}\n`);

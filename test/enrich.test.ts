@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  emptyFields, groupByTopic, statusReport, answersFromFile, mergeAnswers, formatAnswerChange, parseEnrichArgs,
+  emptyFields, groupByTopic, statusReport, answersFromFile, fileAnswersReport, mergeAnswers, formatAnswerChange, parseEnrichArgs,
   performEnrich, enrichDeps, runEnrich, renderReport, CONTACT_TOPIC, NEXT_STEP,
   type EnrichDeps, type EnrichRender, type TemplateRef,
 } from '../src/commands/enrich.js';
@@ -86,8 +86,8 @@ describe('statusReport', () => {
 });
 
 describe('answersFromFile', () => {
-  it('takes pending fields, coerces lists, and reports other keys', () => {
-    const r = answersFromFile(FIELDS.slice(1), {
+  it('takes empty fields, coerces lists, and splits unknown keys from fields that have a value', () => {
+    const r = answersFromFile(FIELDS, { agent_name: 'Ada' }, {
       owner_email: 'ada@example.org',
       owner_interests: 'chess, jazz',
       owner_bio_short: '',
@@ -96,11 +96,13 @@ describe('answersFromFile', () => {
     });
     expect(r).toEqual({
       updates: { owner_email: 'ada@example.org', owner_interests: ['chess', 'jazz'] },
-      ignored: ['agent_name', 'nope'],
+      unknown: ['nope'],
+      alreadySet: ['agent_name'],
+      unusable: [],
     });
   });
 
-  it('cleans list values: string/number items only, trimmed, blanks dropped; nothing usable is ignored', () => {
+  it('cleans list values: string/number items only, trimmed, blanks dropped; nothing usable is unusable', () => {
     const lists: PersonaManifestField[] = [
       { key: 'a', prompt: 'a', type: 'list' },
       { key: 'b', prompt: 'b', type: 'list' },
@@ -108,30 +110,38 @@ describe('answersFromFile', () => {
       { key: 'd', prompt: 'd', type: 'list' },
       { key: 'e', prompt: 'e', type: 'list' },
     ];
-    const r = answersFromFile(lists, {
+    const r = answersFromFile(lists, {}, {
       a: ['  chess ', 42, '', '   ', null, { x: 1 }, ['nested'], true],
       b: [' ', null],
       c: 7,
       d: { x: 1 },
       e: '',
     });
-    expect(r).toEqual({ updates: { a: ['chess', '42'] }, ignored: ['b', 'c', 'd', 'e'] });
+    expect(r).toEqual({ updates: { a: ['chess', '42'] }, unknown: [], alreadySet: [], unusable: ['b', 'c', 'd', 'e'] });
   });
 
   it('rejects anything but an object', () => {
-    expect(answersFromFile(FIELDS, ['x'])).toEqual({ error: expect.stringMatching(/JSON object/) });
+    expect(answersFromFile(FIELDS, {}, ['x'])).toEqual({ error: expect.stringMatching(/JSON object/) });
+  });
+});
+
+describe('fileAnswersReport', () => {
+  it('prints fields with a value apart from unknown keys, and nothing when all were taken', () => {
+    expect(fileAnswersReport({ updates: {}, unknown: ['nope'], alreadySet: ['agent_name', 'owner_name'], unusable: ['x'] })).toEqual([
+      '! skipped 2 field(s) that already have a value; to change one, ask your assistant ("help me fill in my profile") and run fortytwo onboard: agent_name, owner_name',
+      '! ignored 1 key(s) that are not persona fields: nope',
+      '! ignored 1 key(s) with no usable value: x',
+    ]);
+    expect(fileAnswersReport({ updates: { a: 'b' }, unknown: [], alreadySet: [], unusable: [] })).toEqual([]);
   });
 });
 
 describe('mergeAnswers', () => {
-  it('reports only real changes and leaves the input untouched', () => {
+  it('fills only empty fields and leaves the input untouched', () => {
     const answers: Answers = { agent_name: 'Ada', owner_email: '', owner_bio_short: '', owner_interests: ['chess'] };
-    const r = mergeAnswers(FIELDS, answers, { agent_name: 'Ada', owner_email: 'ada@example.org', owner_interests: ['go'] });
-    expect(r.changes).toEqual([
-      { key: 'owner_email', after: 'ada@example.org' },
-      { key: 'owner_interests', before: ['chess'], after: ['go'] },
-    ]);
-    expect(r.answers.owner_email).toBe('ada@example.org');
+    const r = mergeAnswers(FIELDS, answers, { agent_name: 'Grace', owner_email: 'ada@example.org', owner_interests: ['go'], owner_bio_short: '' });
+    expect(r.changes).toEqual([{ key: 'owner_email', after: 'ada@example.org' }]);
+    expect(r.answers).toEqual({ agent_name: 'Ada', owner_email: 'ada@example.org', owner_bio_short: '', owner_interests: ['chess'] });
     expect(answers.owner_email).toBe('');
   });
 
@@ -149,9 +159,9 @@ describe('mergeAnswers', () => {
 });
 
 describe('formatAnswerChange', () => {
-  it('marks new and replaced values', () => {
+  it('marks a filled value', () => {
     expect(formatAnswerChange({ key: 'owner_email', after: 'a@b.c' })).toBe('  + owner_email: a@b.c');
-    expect(formatAnswerChange({ key: 'owner_interests', before: ['a'], after: ['b', 'c'] })).toBe('  ~ owner_interests: a -> b; c');
+    expect(formatAnswerChange({ key: 'owner_interests', after: ['b', 'c'] })).toBe('  + owner_interests: b; c');
   });
 });
 
@@ -314,7 +324,7 @@ describe('performEnrich', () => {
     expect(r).toBe(0);
     expect(saved?.answers.owner_bio_short).toBe('Builder.');
     expect(saved?.answers.agent_name).toBe('Ada');
-    expect(out).toMatch(/ignored 1 key\(s\) that are not empty persona fields: agent_name/);
+    expect(out).toMatch(/skipped 1 field\(s\) that already have a value; to change one, ask your assistant .*: agent_name/);
     expect(out).toContain('+ owner_bio_short: Builder.');
     expect(out).toContain('! owner_bio_short is only in context/SOUL.md (kept as you have it)');
     expect(out).not.toContain('APPROVED.md');
@@ -329,23 +339,39 @@ describe('performEnrich', () => {
     expect(renders).toBe(1);
   });
 
-  it('--answers with nothing empty says so and renders', async () => {
+  it('--answers with nothing empty reports the set keys, says so and renders', async () => {
     const full = identity({ agent_name: 'Ada', owner_email: 'a@b.c', owner_bio_short: 'b', owner_interests: ['x'] });
-    expect(await performEnrich(deps({ readIdentity: () => full }), { answersFile: 'a.json' })).toBe(0);
+    const r = await performEnrich(deps({ readIdentity: () => full, readAnswersFile: () => ({ owner_email: 'new@b.c', nope: 1 }) }), { answersFile: 'a.json' });
+    expect(r).toBe(0);
+    expect(out).toContain('already have a value; to change one, ask your assistant ("help me fill in my profile") and run fortytwo onboard: owner_email');
+    expect(out).toContain('not persona fields: nope');
     expect(out).toMatch(/every persona field has a value/);
     expect(saved).toBeNull();
     expect(renders).toBe(1);
   });
 
-  it('--answers drops the onboard provenance of a value it replaces', async () => {
+  it('--answers with nothing empty still exits 2 on a missing or malformed file', async () => {
+    const full = identity({ agent_name: 'Ada', owner_email: 'a@b.c', owner_bio_short: 'b', owner_interests: ['x'] });
+    expect(await performEnrich(deps({ readIdentity: () => full, readAnswersFile: () => { throw new Error('no such file'); } }), { answersFile: 'a.json' })).toBe(2);
+    expect(err).toMatch(/cannot read a\.json: no such file/);
+    expect(await performEnrich(deps({ readIdentity: () => full, readAnswersFile: () => ['x'] }), { answersFile: 'a.json' })).toBe(2);
+    expect(err).toMatch(/a\.json: the answers file must hold a JSON object/);
+    expect(renders).toBe(0);
+  });
+
+  it('--answers never replaces a set value and keeps its onboard provenance', async () => {
     const prov = { source: 'interview', date: '2026-11-20', observed: 'observed' } as const;
     const withProv = identity(
       { agent_name: 'Ada', owner_email: '', owner_bio_short: 'b', owner_interests: ['x'] },
-      { profileProvenance: { owner_email: prov, owner_bio_short: prov } },
+      { profileProvenance: { owner_bio_short: prov } },
     );
-    const r = await performEnrich(deps({ readIdentity: () => withProv, readAnswersFile: () => ({ owner_email: 'new@b.c' }) }), { answersFile: 'a.json' });
+    const r = await performEnrich(deps({
+      readIdentity: () => withProv,
+      readAnswersFile: () => ({ owner_email: 'new@b.c', owner_bio_short: 'replaced' }),
+    }), { answersFile: 'a.json' });
     expect(r).toBe(0);
     expect(saved?.answers.owner_email).toBe('new@b.c');
+    expect(saved?.answers.owner_bio_short).toBe('b');
     expect(saved?.profileProvenance).toEqual({ owner_bio_short: prov });
   });
 
