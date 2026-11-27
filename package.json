@@ -1,6 +1,6 @@
 {
   "name": "@justfortytwo/installer",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "All-in-one installer and lifecycle CLI for fortytwo — scaffolds the persona surface and provisions the npm engine (memory MCP, safety gate, channel adapters, embedder).",
   "license": "MIT",
   "author": {
@@ -50,8 +50,8 @@
       "@justfortytwo/memory": "2.0.0",
       "@justfortytwo/gate": "^1.0.0",
       "@justfortytwo/persona": "1.1.0",
-      "@justfortytwo/telegram": "1.1.0",
-      "@justfortytwo/scheduler": "2.0.0",
+      "@justfortytwo/telegram": "1.2.0",
+      "@justfortytwo/scheduler": "2.1.0",
       "@justfortytwo/transcript": "^1.0.1"
     }
   },

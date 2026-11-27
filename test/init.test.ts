@@ -456,10 +456,10 @@ describe('declared engine compat', () => {
     // engineInstallSpecs over the real compat (nothing present) must offer scheduler.
     expect(engineInstallSpecs(compat, () => false)).toContain(`@justfortytwo/scheduler@${compat['@justfortytwo/scheduler']}`);
   });
-  it('pins telegram to the exact 1.1.0 release; runner stays transitive', () => {
+  it('pins telegram to the exact 1.2.0 release; runner stays transitive', () => {
     const compat = readSelfCompatRanges();
-    expect(compat['@justfortytwo/telegram']).toBe('1.1.0');
-    expect(engineInstallSpecs(compat, () => false)).toContain('@justfortytwo/telegram@1.1.0');
+    expect(compat['@justfortytwo/telegram']).toBe('1.2.0');
+    expect(engineInstallSpecs(compat, () => false)).toContain('@justfortytwo/telegram@1.2.0');
     expect(Object.keys(compat)).not.toContain('@justfortytwo/runner');
   });
   it('declares @justfortytwo/transcript (^1.0.1, accepts memory 2.x) so init installs and wires it', () => {
@@ -467,8 +467,8 @@ describe('declared engine compat', () => {
     expect(compat['@justfortytwo/transcript']).toBe('^1.0.1');
     expect(engineInstallSpecs(compat, () => false)).toContain('@justfortytwo/transcript@^1.0.1');
   });
-  it('pins scheduler to the exact 2.0.0 release that owns the jobs queue', () => {
-    expect(readSelfCompatRanges()['@justfortytwo/scheduler']).toBe('2.0.0');
+  it('pins scheduler to the exact 2.1.0 release (owns the jobs queue; Telegram output note)', () => {
+    expect(readSelfCompatRanges()['@justfortytwo/scheduler']).toBe('2.1.0');
   });
   it('pins memory to the exact 2.0.0 release (jobs queue handed to the scheduler)', () => {
     expect(readSelfCompatRanges()['@justfortytwo/memory']).toBe('2.0.0');
