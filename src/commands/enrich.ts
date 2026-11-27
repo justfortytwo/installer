@@ -1,18 +1,21 @@
-// enrich: fill in the persona fields that are still empty, then re-render.
+// enrich: show the persona fields that are still empty, or save them from a file.
 //
-//   fortytwo enrich                  ask for every manifest field with no value yet
-//   fortytwo enrich --all            ask for every field; Enter keeps the current value
-//   fortytwo enrich --answers <file> take the values from a JSON file instead of asking
+//   fortytwo enrich                  list the empty fields by topic and re-render
+//   fortytwo enrich --answers <file> take the values from a JSON file and re-render
 //
 // init asks only for the required fields, so most of the persona manifest (bios,
-// voice, vocabulary, domain) starts empty. enrich is where the owner types those
-// in. It asks one field at a time; Enter skips a field and a line with only "."
-// stops and saves what was answered so far.
+// voice, vocabulary, domain) starts empty. enrich used to ask for each of them in
+// a row (about 41 questions); now the assistant fills them through conversation:
+// the owner asks it "help me fill in my profile", persona's onboarding skill
+// interviews by topic and writes .fortytwo/onboarding/draft.json, and
+// `fortytwo onboard` saves it. A bare `fortytwo enrich` is the status for that:
+// the empty fields grouped by the persona file whose template uses them, and the
+// next step. `--answers` stays for values the owner already has in a file.
 //
 // Split with `fortytwo onboard`: onboard saves values the assistant DRAFTED from
 // fetched and uploaded content (untrusted, so it confirms each change and records
-// provenance), plus deep-profile facts in memory. enrich saves values the owner
-// types directly, so there is nothing to confirm and no memory involved. Both
+// provenance), plus deep-profile facts in memory. enrich --answers saves values
+// the owner wrote, so there is nothing to confirm and no memory involved. Both
 // write the same `answers` map. When enrich replaces a value onboard saved, it
 // drops that key's `profileProvenance`, since the old source no longer applies.
 //
@@ -21,20 +24,17 @@
 // outputs the owner already has are never overwritten, and a captured file the
 // owner moved aside is written fresh. The report names only files whose content
 // changed, and for each changed answer the kept captured files that use it.
-// Ctrl+D while asking stops and saves like "."; Ctrl+C cancels and saves nothing.
 
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
-import { createInterface } from 'node:readline/promises';
 import { readIdentity, writeIdentity, type Answers, type Identity } from '../state.js';
 import {
   loadPersonaManifest, renderPersona, templateKeys, type PersonaFile, type PersonaManifestField, type RenderResult,
 } from '../render.js';
 import { escapeForTerminal } from '../onboard.js';
-import { askList, coerceList, isEmpty, listPromptLabel } from './init.js';
+import { coerceList, isEmpty } from './init.js';
 
 export interface EnrichFlags {
-  all?: boolean;
   answersFile?: string;
   help?: boolean;
 }
@@ -46,12 +46,10 @@ export interface EnrichDeps {
   fields: () => PersonaManifestField[];
   /** Render the persona; `changed` lists the written outputs whose content differs from before. */
   render: (identity: Identity) => EnrichRender;
-  /** Each persona output with the answer keys its template references. */
+  /** Each persona output, in manifest order, with the answer keys its template references. */
   templateRefs: () => TemplateRef[];
   /** The parsed `--answers` file. Throws when it is missing or not JSON. */
   readAnswersFile: (path: string) => unknown;
-  /** Present only when a person can answer in a terminal. Rejects with PromptEnd on Ctrl+D / Ctrl+C. */
-  ask?: (prompt: string) => Promise<string>;
   out: (s: string) => void;
   err: (s: string) => void;
 }
@@ -66,14 +64,6 @@ export interface TemplateRef {
   keys: string[];
 }
 
-/** The terminal ended a prompt: `eof` is Ctrl+D (stop and save), `cancel` is Ctrl+C (save nothing). */
-export class PromptEnd extends Error {
-  constructor(readonly kind: 'eof' | 'cancel') {
-    super(kind === 'eof' ? 'input closed' : 'cancelled');
-    this.name = 'PromptEnd';
-  }
-}
-
 /** One answer enrich saved: `before` is absent when the field had no value. */
 export interface AnswerChange {
   key: string;
@@ -81,29 +71,34 @@ export interface AnswerChange {
   after: string | string[];
 }
 
-/** Typed on its own line, ends the prompting and saves what was answered. */
-export const STOP_WORD = '.';
+/** The empty fields of one persona file, or of the contact group. */
+export interface TopicGroup {
+  topic: string;
+  keys: string[];
+}
 
-const USAGE = `Usage: fortytwo enrich [--all] [--answers <file.json>]
+/** The group for fields no template references (owner_email, owner_address). */
+export const CONTACT_TOPIC = 'contact (saved in identity.json only)';
 
-Ask for the persona fields that are still empty, save the answers to
-.fortytwo/identity.json and re-render the persona. Files you already have
-under context/ are kept as they are.
-  Enter            skip a field (it stays empty)
-  .                stop asking and save what you answered so far
-  --all            also ask for fields that have a value (Enter keeps it)
-  Ctrl+D           same as "."
-  Ctrl+C           cancel; nothing is saved
-  --answers <file> read the values from a JSON object keyed by field
-                   (no prompts; works without a terminal)
+export const NEXT_STEP =
+  'Ask your assistant: "help me fill in my profile" (it interviews you by topic, then run fortytwo onboard to save).';
+
+const USAGE = `Usage: fortytwo enrich [--answers <file.json>]
+
+Without options: list the persona fields that are still empty, grouped by
+the persona file that uses them, and re-render the persona (a file you
+moved aside under context/ is written again). To fill the fields, ask your
+assistant "help me fill in my profile", then run \`fortytwo onboard\`.
+  --answers <file> save values from a JSON object keyed by field (only
+                   empty fields are taken) and re-render the persona.
+                   Files you already have under context/ are kept.
 `;
 
 export function parseEnrichArgs(argv: string[]): EnrichFlags | { error: string } {
   const flags: EnrichFlags = {};
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--all') flags.all = true;
-    else if (a === '--answers') {
+    if (a === '--answers') {
       const v = argv[++i];
       if (!v) return { error: '--answers needs a file path' };
       flags.answersFile = v;
@@ -113,17 +108,54 @@ export function parseEnrichArgs(argv: string[]): EnrichFlags | { error: string }
   return flags;
 }
 
-/** The fields to ask about, in manifest order: the empty ones, or every one with `all`. */
-export function pendingFields(
-  fields: PersonaManifestField[],
-  answers: Answers,
-  opts: { all?: boolean } = {},
-): PersonaManifestField[] {
-  if (opts.all) return [...fields];
+/** The fields with no value yet (absent, blank or an empty list), in manifest order. */
+export function emptyFields(fields: PersonaManifestField[], answers: Answers): PersonaManifestField[] {
   return fields.filter((f) => !Object.prototype.hasOwnProperty.call(answers, f.key) || isEmpty(answers[f.key]));
 }
 
-/** A value on one line, for prompts and the change report. */
+/**
+ * Group empty fields by topic: the first persona output (manifest order) whose
+ * template references the key. Topics keep manifest order; fields no template
+ * references go last under CONTACT_TOPIC. Topics with no empty field are left out.
+ */
+export function groupByTopic(empty: PersonaManifestField[], refs: TemplateRef[]): TopicGroup[] {
+  const groups = new Map<string, string[]>(refs.map((r) => [r.output, []]));
+  const contact: string[] = [];
+  for (const f of empty) {
+    const ref = refs.find((r) => r.keys.includes(f.key));
+    if (ref) groups.get(ref.output)!.push(f.key);
+    else contact.push(f.key);
+  }
+  const out = [...groups].filter(([, keys]) => keys.length > 0).map(([topic, keys]) => ({ topic, keys }));
+  if (contact.length > 0) out.push({ topic: CONTACT_TOPIC, keys: contact });
+  return out;
+}
+
+/** The status lines for a bare `fortytwo enrich`. */
+export function statusReport(groups: TopicGroup[]): string[] {
+  const total = groups.reduce((n, g) => n + g.keys.length, 0);
+  if (total === 0) return ['enrich: every persona field has a value.'];
+  const lines = [`enrich: ${total} persona field(s) still empty.`];
+  for (const g of groups) {
+    lines.push('', `${g.topic} (${g.keys.length})`, ...wrapKeys(g.keys));
+  }
+  return lines;
+}
+
+/** Comma-separated keys, indented, wrapped near 78 columns. */
+function wrapKeys(keys: string[], width = 78): string[] {
+  const lines: string[] = [];
+  let line = '';
+  for (const [i, key] of keys.entries()) {
+    const word = i < keys.length - 1 ? `${key},` : key;
+    if (line && `  ${line} ${word}`.length > width) { lines.push(`  ${line}`); line = word; }
+    else line = line ? `${line} ${word}` : word;
+  }
+  if (line) lines.push(`  ${line}`);
+  return lines;
+}
+
+/** A value on one line, for the change report. */
 export function preview(v: string | string[], max = 60): string {
   const flat = (Array.isArray(v) ? v.join('; ') : v).replace(/\s*\n\s*/g, ' / ');
   const short = flat.length > max ? `${flat.slice(0, max - 3)}...` : flat;
@@ -131,51 +163,8 @@ export function preview(v: string | string[], max = 60): string {
 }
 
 /**
- * Ask for each pending field. A blank answer skips it (the current value, if
- * any, stays). Lists are asked item by item like init. Only non-blank answers
- * are returned. "." or Ctrl+D (PromptEnd 'eof') stops and keeps what was
- * answered; Ctrl+C (PromptEnd 'cancel') propagates. Pure: `ask` is injected.
- */
-export async function askFields(
-  pending: PersonaManifestField[],
-  answers: Answers,
-  ask: (prompt: string) => Promise<string>,
-): Promise<{ updates: Answers; stopped: boolean }> {
-  const updates: Answers = {};
-  let stopped = false;
-  const ask_ = async (q: string): Promise<string> => {
-    let a: string;
-    try {
-      a = await ask(q);
-    } catch (e) {
-      if (!(e instanceof PromptEnd) || e.kind !== 'eof') throw e;
-      stopped = true;
-      return '';
-    }
-    if (a.trim() !== STOP_WORD) return a;
-    stopped = true;
-    return '';
-  };
-  for (const [i, f] of pending.entries()) {
-    const current = Object.prototype.hasOwnProperty.call(answers, f.key) ? answers[f.key] : undefined;
-    const has = current !== undefined && !isEmpty(current);
-    const head = `(${i + 1}/${pending.length}) `;
-    if (f.type === 'list') {
-      const label = `${head}${listPromptLabel(f.prompt)}${has ? `\n  current: ${preview(current)} (Enter keeps it)` : ''}`;
-      const items = await askList(label, ask_);
-      if (items.length > 0) updates[f.key] = items;
-    } else {
-      const answer = (await ask_(`${head}${f.prompt}${has ? ` [${preview(current)}]` : ''}\n> `)).trim();
-      if (answer) updates[f.key] = answer;
-    }
-    if (stopped) break;
-  }
-  return { updates, stopped };
-}
-
-/**
- * Values from an `--answers` JSON object for the pending fields. Keys that are
- * not pending (unknown, or already set without --all) are returned in `ignored`.
+ * Values from an `--answers` JSON object for the empty fields. Keys that are
+ * not empty fields (unknown, or already set) are returned in `ignored`.
  * Lists accept an array of strings/numbers (trimmed, blanks dropped) or a
  * comma/newline separated string, like init; a list value with no usable item
  * is ignored too.
@@ -290,46 +279,39 @@ export async function performEnrich(deps: EnrichDeps, flags: EnrichFlags): Promi
     return 2;
   }
 
-  const pending = pendingFields(fields, identity.answers, { all: flags.all });
-  if (pending.length === 0) {
-    deps.out('enrich: every persona field has a value. Run `fortytwo enrich --all` to revisit them.\n');
+  const empty = emptyFields(fields, identity.answers);
+  if (flags.answersFile === undefined) {
+    const groups = groupByTopic(empty, deps.templateRefs());
+    for (const line of statusReport(groups)) deps.out(`${line}\n`);
+    // Holes from a newer persona are filled for rendering only; nothing is written.
+    renderAndReport(deps, { ...identity, answers: mergeAnswers(fields, identity.answers, {}).answers }, []);
+    if (empty.length > 0) deps.out(`\n${NEXT_STEP}\n`);
+    return 0;
+  }
+
+  if (empty.length === 0) {
+    deps.out('enrich: every persona field has a value.\n');
     renderAndReport(deps, identity, []);
     return 0;
   }
 
-  let updates: Answers;
-  if (flags.answersFile !== undefined) {
-    let raw: unknown;
-    try {
-      raw = deps.readAnswersFile(flags.answersFile);
-    } catch (e) {
-      deps.err(`enrich: cannot read ${flags.answersFile}: ${(e as Error).message}\n`);
-      return 2;
-    }
-    const parsed = answersFromFile(pending, raw);
-    if ('error' in parsed) {
-      deps.err(`enrich: ${flags.answersFile}: ${parsed.error}\n`);
-      return 2;
-    }
-    if (parsed.ignored.length > 0) {
-      deps.out(`! ignored ${parsed.ignored.length} key(s) that are not empty persona fields${flags.all ? '' : ' (use --all to replace set ones)'}: ${parsed.ignored.map((k) => escapeForTerminal(k)).join(', ')}\n`);
-    }
-    updates = parsed.updates;
-  } else if (deps.ask) {
-    deps.out(`${pending.length} field(s) to fill. Enter skips one; "${STOP_WORD}" stops and saves.\n`);
-    try {
-      updates = (await askFields(pending, identity.answers, deps.ask)).updates;
-    } catch (e) {
-      if (!(e instanceof PromptEnd)) throw e;
-      deps.err('\nenrich: cancelled, nothing saved\n');
-      return 130;
-    }
-  } else {
-    deps.err('enrich: needs a terminal to ask questions. Run it in one, or pass --answers <file.json>.\n');
+  let raw: unknown;
+  try {
+    raw = deps.readAnswersFile(flags.answersFile);
+  } catch (e) {
+    deps.err(`enrich: cannot read ${flags.answersFile}: ${(e as Error).message}\n`);
     return 2;
   }
+  const parsed = answersFromFile(empty, raw);
+  if ('error' in parsed) {
+    deps.err(`enrich: ${flags.answersFile}: ${parsed.error}\n`);
+    return 2;
+  }
+  if (parsed.ignored.length > 0) {
+    deps.out(`! ignored ${parsed.ignored.length} key(s) that are not empty persona fields: ${parsed.ignored.map((k) => escapeForTerminal(k)).join(', ')}\n`);
+  }
 
-  const merged = mergeAnswers(fields, identity.answers, updates);
+  const merged = mergeAnswers(fields, identity.answers, parsed.updates);
   if (merged.changes.length === 0) {
     deps.out('enrich: nothing changed in .fortytwo/identity.json.\n');
     // Holes from a newer persona are filled for rendering only; nothing is written.
@@ -351,7 +333,7 @@ export async function performEnrich(deps: EnrichDeps, flags: EnrichFlags): Promi
   return 0;
 }
 
-/** The real fs-backed deps for a project root, without `ask`. */
+/** The real fs-backed deps for a project root. */
 export function enrichDeps(root: string): EnrichDeps {
   return {
     readIdentity: () => readIdentity(root),
@@ -392,25 +374,5 @@ export async function runEnrich(argv: string[]): Promise<number> {
     process.stderr.write(`enrich: ${parsed.error}\n\n${USAGE}`);
     return 2;
   }
-  const base = enrichDeps(process.cwd());
-  if (process.stdin.isTTY !== true || parsed.answersFile !== undefined || parsed.help) return performEnrich(base, parsed);
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  // Ctrl+D and Ctrl+C both reject rl.question with an AbortError. A SIGINT
-  // listener (which stops readline from closing on Ctrl+C) aborts the question
-  // through this signal instead, so `signal.aborted` tells the two apart.
-  const ctrlC = new AbortController();
-  rl.on('SIGINT', () => ctrlC.abort());
-  const ask = async (q: string): Promise<string> => {
-    try {
-      return await rl.question(q, { signal: ctrlC.signal });
-    } catch (e) {
-      if ((e as Error).name !== 'AbortError') throw e;
-      throw new PromptEnd(ctrlC.signal.aborted ? 'cancel' : 'eof');
-    }
-  };
-  try {
-    return await performEnrich({ ...base, ask }, parsed);
-  } finally {
-    rl.close();
-  }
+  return performEnrich(enrichDeps(process.cwd()), parsed);
 }
