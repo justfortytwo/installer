@@ -135,6 +135,41 @@ describe('runUnbind (integration: revokes a chat paired through the bindings db)
     expect(existsSync(resolveBindingsDbPath(dir))).toBe(false);
   });
 
+  it('names an id authorized only by ALLOWED_CHAT_IDS instead of saying nothing changed', async () => {
+    writeFileSync(join(dir, '.env'), 'ALLOWED_CHAT_IDS=42\n');
+    const { result, out } = await captured(() => runUnbind(['--chat-id', '42']));
+    expect(result).toBe(0);
+    expect(out).not.toMatch(/nothing changed/);
+    expect(out).toMatch(/42 is still in ALLOWED_CHAT_IDS and keeps access/);
+  });
+
+  it('does not claim the bridge refuses a chat that ALLOWED_CHAT_IDS still authorizes', async () => {
+    await pairedStore();
+    writeFileSync(join(dir, '.env'), 'ALLOWED_CHAT_IDS=42\n');
+    const { out } = await captured(() => runUnbind(['--chat-id', '42']));
+    expect(out).not.toMatch(/refuses/);
+    expect(out).toMatch(/removed the pairing for 42/);
+  });
+
+  it('--all names every ALLOWED id and voids pending pairing codes', async () => {
+    await pairedStore();
+    const tg = (await loadTelegram()) as unknown as { SqliteBindingStore: new (p: string) => { putChallenge(c: unknown): void; takeChallenge(code: string, now: number): unknown } };
+    const store = new tg.SqliteBindingStore(resolveBindingsDbPath(dir));
+    store.putChallenge({ code: '123456', owner: 'owner', expiresAt: Date.now() + 300_000 });
+    writeFileSync(join(dir, '.env'), 'ALLOWED_CHAT_IDS=42,7\n');
+    const { out } = await captured(() => runUnbind(['--all']));
+    expect(out).toMatch(/42, 7 are still in ALLOWED_CHAT_IDS/);
+    expect(store.takeChallenge('123456', Date.now())).toBeNull();
+  });
+
+  it('exits 1 when the bindings db exists but telegram is not installed', async () => {
+    await pairedStore();
+    rmSync(join(dir, 'node_modules', '@justfortytwo', 'telegram'), { recursive: true, force: true });
+    const { result, err } = await captured(() => runUnbind(['--chat-id', '42']));
+    expect(result).toBe(1);
+    expect(err).toMatch(/not installed, so paired chats were not revoked/);
+  });
+
   it('leaves the bindings db alone for another channel', async () => {
     const store = await pairedStore();
     await captured(() => runUnbind(['--all', '--channel', 'slack']));

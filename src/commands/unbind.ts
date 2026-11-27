@@ -42,6 +42,8 @@ export function pruneChannels(
 export interface PairedChatStore {
   list(channelType?: string): Array<{ channelUserId: string }>;
   remove(channelType: string, channelUserId: string): void;
+  /** Drops challenges with expiresAt <= now; a far-future `now` drops them all. */
+  sweepChallenges?(now: number): void;
 }
 
 /**
@@ -52,6 +54,9 @@ export function revokePairedChats(store: PairedChatStore, sel: { chatId?: string
   const ids = store.list('telegram').map((b) => b.channelUserId)
     .filter((id) => sel.all === true || (sel.chatId != null && id === sel.chatId));
   for (const id of ids) store.remove('telegram', id);
+  // Any chat can redeem a pending pairing code, so `--all` also voids codes
+  // minted by `fortytwo pair` that have not expired yet.
+  if (sel.all === true) store.sweepChallenges?.(Number.MAX_SAFE_INTEGER);
   return ids;
 }
 
@@ -108,19 +113,28 @@ export async function runUnbind(argv: string[]): Promise<number> {
     process.stderr.write('unbind: the Telegram bindings db exists but @justfortytwo/telegram is not installed, so paired chats were not revoked.\n');
   }
 
-  if (removed.length === 0 && !revoked?.length) {
+  // ALLOWED_CHAT_IDS authorizes on its own (the bridge checks it first), so
+  // name every selected id it still lists, even when nothing else changed.
+  const unbound = new Set([...removed.flatMap((c) => c.allowedChatIds ?? []), ...(revoked ?? [])]);
+  if (flags.chatId) unbound.add(flags.chatId);
+  const stillAllowed = (telegramSelected ? allowedChatIds(root) : [])
+    .filter((id) => flags.all === true || unbound.has(id));
+  const refused = (revoked ?? []).filter((id) => !stillAllowed.includes(id));
+
+  if (removed.length === 0 && !revoked?.length && stillAllowed.length === 0) {
     process.stdout.write('unbind: no matching binding found; nothing changed.\n');
     return revoked === null ? 1 : 0;
   }
   if (removed.length) process.stdout.write(`✓ removed ${removed.length} binding(s) from identity.json\n`);
-  if (revoked?.length) {
-    process.stdout.write(`✓ revoked paired chat(s) ${revoked.join(', ')}; the bridge refuses them from the next message\n`);
+  if (refused.length) {
+    process.stdout.write(`✓ revoked paired chat(s) ${refused.join(', ')}; the bridge refuses them from the next message\n`);
   }
-  // ALLOWED_CHAT_IDS authorizes on its own; name the unbound ids it still lists.
-  const unbound = new Set([...removed.flatMap((c) => c.allowedChatIds ?? []), ...(revoked ?? [])]);
-  const stillAllowed = (telegramSelected ? allowedChatIds(root) : []).filter((id) => unbound.has(id) || flags.all === true);
+  const keptByAllowlist = (revoked ?? []).filter((id) => stillAllowed.includes(id));
+  if (keptByAllowlist.length) {
+    process.stdout.write(`✓ removed the pairing for ${keptByAllowlist.join(', ')}\n`);
+  }
   if (stillAllowed.length) {
-    process.stdout.write(`  ${stillAllowed.join(', ')} ${stillAllowed.length === 1 ? 'is' : 'are'} still in ALLOWED_CHAT_IDS, which authorizes on its own: remove ${stillAllowed.length === 1 ? 'it' : 'them'} from .env and restart fortytwo.\n`);
+    process.stdout.write(`  ${stillAllowed.join(', ')} ${stillAllowed.length === 1 ? 'is' : 'are'} still in ALLOWED_CHAT_IDS and keep${stillAllowed.length === 1 ? 's' : ''} access: remove ${stillAllowed.length === 1 ? 'it' : 'them'} from .env and restart fortytwo.\n`);
   }
   if (revoked === null) return 1;
   return 0;
