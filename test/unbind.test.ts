@@ -128,6 +128,18 @@ describe('runUnbind (integration: revokes a chat paired through the bindings db)
     expect(out).not.toMatch(/\b7\b.*ALLOWED/);
   });
 
+  it('--all reports cancelled codes instead of "nothing changed" when no chat was paired', async () => {
+    const tg = (await loadTelegram()) as unknown as { SqliteBindingStore: new (p: string) => { putChallenge(c: unknown): void; takeChallenge(code: string, now: number): unknown } };
+    mkdirSync(join(dir, 'state'), { recursive: true });
+    const store = new tg.SqliteBindingStore(resolveBindingsDbPath(dir));
+    store.putChallenge({ code: '654321', owner: 'owner', expiresAt: Date.now() + 300_000 });
+    const { result, out } = await captured(() => runUnbind(['--all']));
+    expect(result).toBe(0);
+    expect(out).not.toMatch(/nothing changed/);
+    expect(out).toMatch(/cancelled any unused pairing codes/);
+    expect(store.takeChallenge('654321', Date.now())).toBeNull();
+  });
+
   it('never creates the bindings db when nothing was paired', async () => {
     const { result, out } = await captured(() => runUnbind(['--all']));
     expect(result).toBe(0);
